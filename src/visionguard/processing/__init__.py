@@ -1,5 +1,6 @@
 """Classical image-processing helpers used by VisionGuard AI."""
 
+from .filtering import apply_clahe, gaussian_blur, median_blur
 from .preprocessing import (
     ImageValidationError,
     ResizeTransform,
@@ -15,7 +16,10 @@ from .preprocessing import (
 __all__ = [
     "ImageValidationError",
     "ResizeTransform",
+    "apply_clahe",
+    "gaussian_blur",
     "load_image",
+    "median_blur",
     "restore_map",
     "resize_image",
     "resize_mask",
