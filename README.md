@@ -6,7 +6,7 @@ VisionGuard AI is an MSc Digital Image Processing project exploring how classica
 
 ## Current status
 
-The foundation includes Python environment guidance, project configuration, device selection, logging, and dataset-layout validation. Initial image-processing tasks add safe image loading, explicit RGB/BGR conversion, aspect-ratio resizing, mask/map size alignment, Gaussian and median filtering, CLAHE enhancement, channel-aware intensity histograms, and Canny edge detection. Threshold masks, morphology, the trained anomaly model, evaluation outputs, and the Streamlit workflow are later implementation phases. No model scores or benchmark results are available yet.
+The foundation includes Python environment guidance, project configuration, device selection, logging, and dataset-layout validation. Initial image-processing tasks add safe image loading, explicit RGB/BGR conversion, aspect-ratio resizing, mask/map size alignment, Gaussian and median filtering, CLAHE enhancement, channel-aware intensity histograms, Canny edge detection, and global, Otsu, and adaptive threshold masks. Morphology, the trained anomaly model, evaluation outputs, and the Streamlit workflow are later implementation phases. No model scores or benchmark results are available yet.
 
 ## Planned approach
 
