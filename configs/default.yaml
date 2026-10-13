@@ -1,0 +1,28 @@
+project:
+  name: VisionGuard AI
+  version: 0.1.0
+dataset:
+  root: data/mvtec_ad
+  category: bottle
+  normal_class: good
+preprocessing:
+  input_size: [256, 256]
+  preserve_aspect_ratio: true
+model:
+  architecture: resnet18
+  feature_layers: [layer2, layer3]
+  batch_size: 8
+  max_memory_bank_patches: 10000
+  distance_metric: euclidean
+  score_percentile: 99.5
+  mask_threshold: 0.5
+  device: auto
+  random_seed: 42
+classical:
+  blur_kernel_size: 3
+  min_region_area: 20
+paths:
+  artifacts: models
+  outputs: outputs
+logging:
+  level: INFO
