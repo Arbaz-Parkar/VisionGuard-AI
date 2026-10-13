@@ -2,6 +2,7 @@
 
 from .filtering import apply_clahe, gaussian_blur, median_blur
 from .histograms import compute_histograms, plot_histograms
+from .edges import canny_edges
 from .preprocessing import (
     ImageValidationError,
     ResizeTransform,
@@ -18,6 +19,7 @@ __all__ = [
     "ImageValidationError",
     "ResizeTransform",
     "apply_clahe",
+    "canny_edges",
     "compute_histograms",
     "gaussian_blur",
     "load_image",
