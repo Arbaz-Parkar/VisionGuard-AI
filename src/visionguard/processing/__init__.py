@@ -5,6 +5,7 @@ from .histograms import compute_histograms, plot_histograms
 from .edges import canny_edges
 from .thresholding import adaptive_threshold, global_threshold, otsu_threshold
 from .morphology import morphology
+from .contours import CandidateRegion, extract_candidate_regions
 from .preprocessing import (
     ImageValidationError,
     ResizeTransform,
@@ -19,10 +20,12 @@ from .preprocessing import (
 
 __all__ = [
     "ImageValidationError",
+    "CandidateRegion",
     "ResizeTransform",
     "apply_clahe",
     "adaptive_threshold",
     "canny_edges",
+    "extract_candidate_regions",
     "compute_histograms",
     "gaussian_blur",
     "global_threshold",
