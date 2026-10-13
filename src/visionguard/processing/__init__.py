@@ -4,6 +4,7 @@ from .filtering import apply_clahe, gaussian_blur, median_blur
 from .histograms import compute_histograms, plot_histograms
 from .edges import canny_edges
 from .thresholding import adaptive_threshold, global_threshold, otsu_threshold
+from .morphology import morphology
 from .preprocessing import (
     ImageValidationError,
     ResizeTransform,
@@ -27,6 +28,7 @@ __all__ = [
     "global_threshold",
     "load_image",
     "median_blur",
+    "morphology",
     "plot_histograms",
     "otsu_threshold",
     "restore_map",
