@@ -19,6 +19,7 @@ from .preprocessing import (
 )
 from .convolution import convolve2d
 from .frequency import fft_magnitude_spectrum, frequency_filter
+from .noise import add_gaussian_noise, add_salt_pepper_noise
 
 __all__ = [
     "ImageValidationError",
@@ -26,6 +27,8 @@ __all__ = [
     "ResizeTransform",
     "apply_clahe",
     "adaptive_threshold",
+    "add_gaussian_noise",
+    "add_salt_pepper_noise",
     "canny_edges",
     "convolve2d",
     "extract_candidate_regions",
