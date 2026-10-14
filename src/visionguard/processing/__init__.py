@@ -20,11 +20,14 @@ from .preprocessing import (
 from .convolution import convolve2d
 from .frequency import fft_magnitude_spectrum, frequency_filter
 from .noise import add_gaussian_noise, add_salt_pepper_noise
+from .template_matching import TemplateMatchResult, TemplateMethod, match_template
 
 __all__ = [
     "ImageValidationError",
     "CandidateRegion",
     "ResizeTransform",
+    "TemplateMatchResult",
+    "TemplateMethod",
     "apply_clahe",
     "adaptive_threshold",
     "add_gaussian_noise",
@@ -39,6 +42,7 @@ __all__ = [
     "global_threshold",
     "load_image",
     "median_blur",
+    "match_template",
     "morphology",
     "plot_histograms",
     "otsu_threshold",
