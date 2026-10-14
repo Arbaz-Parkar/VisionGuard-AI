@@ -17,6 +17,7 @@ from .preprocessing import (
     to_rgb,
     validate_image,
 )
+from .convolution import convolve2d
 
 __all__ = [
     "ImageValidationError",
@@ -25,6 +26,7 @@ __all__ = [
     "apply_clahe",
     "adaptive_threshold",
     "canny_edges",
+    "convolve2d",
     "extract_candidate_regions",
     "compute_histograms",
     "gaussian_blur",
