@@ -6,7 +6,7 @@ VisionGuard AI is an MSc Digital Image Processing project exploring how classica
 
 ## Current status
 
-The foundation includes Python environment guidance, project configuration, device selection, logging, and dataset-layout validation. Initial image-processing tasks add safe image loading, explicit RGB/BGR conversion, aspect-ratio resizing, mask/map size alignment, Gaussian and median filtering, CLAHE enhancement, channel-aware intensity histograms, Canny edge detection, global, Otsu, and adaptive threshold masks, binary morphology, and contour-based candidate regions. The trained anomaly model, evaluation outputs, and Streamlit workflow are later implementation phases. No model scores or benchmark results are available yet.
+The foundation includes validated experiment settings, CPU/CUDA device selection, logging, dataset discovery, and a seeded normal-only calibration split. The Image Processing Lab currently includes safe image loading, explicit RGB/BGR conversion, resizing, filtering, CLAHE, histograms, Canny edges, thresholding, morphology, and contour candidates. Classical anomaly baselines, the trained detector, evaluation outputs, and Streamlit workflow remain later milestones. No model scores or benchmark results are available yet.
 
 ## Planned approach
 
@@ -28,7 +28,7 @@ If the Python launcher cannot find Python 3.11, use the installed interpreter pa
 & "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe" -m venv .venv
 ```
 
-The initial setup uses the CPU-only PyTorch wheel to keep installation smaller. Install PyTorch and TorchVision first:
+The checked-in environment uses CPU-only PyTorch, which satisfies the required CPU path. This machine also has an NVIDIA RTX 2050 with 4 GB VRAM, but the current Torch build cannot use it. Choose and install a matching CUDA-enabled Torch/TorchVision build before model experiments if you want GPU acceleration. Install PyTorch and TorchVision first:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
@@ -43,7 +43,7 @@ You can use the environment without activating it by running commands through `.
 
 ## Dataset setup
 
-Obtain MVTec AD from the [official dataset page](https://www.mvtec.com/company/research/datasets/mvtec-ad), review its access and usage conditions, and extract it so the selected category resembles:
+Obtain MVTec AD from the [official dataset page](https://www.mvtec.com/research-teaching/datasets/mvtec-ad), review its access and usage conditions, and extract it so the selected category resembles:
 
 ```text
 data/
@@ -56,6 +56,8 @@ data/
 ```
 
 The dataset is not included in this repository. Do not commit dataset images or generated model weights.
+
+MVTec AD is released under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License (CC BY-NC-SA 4.0). This project uses the dataset for non-commercial academic work; see the [official MVTec AD page](https://www.mvtec.com/research-teaching/datasets/mvtec-ad) for the current license terms. Dataset credit: MVTec Software GmbH.
 
 After installing the package, validate the local category:
 

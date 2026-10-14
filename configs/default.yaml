@@ -5,6 +5,8 @@ dataset:
   root: data/mvtec_ad
   category: bottle
   normal_class: good
+  calibration_fraction: 0.15
+  calibration_seed: 42
 preprocessing:
   input_size: [256, 256]
   preserve_aspect_ratio: true
@@ -13,13 +15,23 @@ model:
   feature_layers: [layer2, layer3]
   batch_size: 8
   max_memory_bank_patches: 10000
+  sampling_strategy: random
+  sampling_ratio: 0.1
   distance_metric: euclidean
+  aggregation: max
   score_percentile: 99.5
-  mask_threshold: 0.5
+  smoothing_sigma: 4.0
+  mask_threshold: 0.5 # Legacy provisional value; calibration rules are defined below.
   device: auto
   random_seed: 42
+thresholds:
+  image_rule: mean_plus_3std
+  pixel_rule: percentile
+  image_percentile: 99.5
+  pixel_percentile: 99.5
 classical:
   blur_kernel_size: 3
+  local_blur_kernel_size: 31
   min_region_area: 20
 paths:
   artifacts: models

@@ -87,9 +87,13 @@ def validate_category(dataset_root: str | Path, category: str) -> dict[str, Any]
             missing_masks.append(str(expected_mask))
 
     if missing_masks:
-        warnings.append(f"{len(missing_masks)} test anomaly image(s) have no matching ground-truth mask.")
+        warnings.append(
+            f"{len(missing_masks)} test anomaly image(s) have no matching ground-truth mask."
+        )
     if unsupported_files:
-        warnings.append(f"{len(unsupported_files)} unsupported file(s) were found in train/good or test.")
+        warnings.append(
+            f"{len(unsupported_files)} unsupported file(s) were found in train/good or test."
+        )
     if any(p.parent.name != "good" for p in test_images) and not ground_truth_dir.is_dir():
         warnings.append(f"Ground-truth directory is missing: {ground_truth_dir}")
 
@@ -101,6 +105,7 @@ def validate_category(dataset_root: str | Path, category: str) -> dict[str, Any]
         "normal_training_image_count": len(training_images),
         "test_image_count": len(test_images),
         "missing_mask_count": len(missing_masks),
+        "mask_coverage_complete": bool(test_images) and not missing_masks,
         "missing_masks": missing_masks,
         "unsupported_files": unsupported_files,
         "errors": errors,

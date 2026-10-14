@@ -20,6 +20,7 @@ def test_valid_mvtec_layout_and_mask_pairing(tmp_path: Path) -> None:
     assert report["normal_training_image_count"] == 1
     assert report["test_image_count"] == 2
     assert report["missing_mask_count"] == 0
+    assert report["mask_coverage_complete"]
 
 
 def test_missing_ground_truth_mask_is_reported(tmp_path: Path) -> None:
@@ -30,12 +31,14 @@ def test_missing_ground_truth_mask_is_reported(tmp_path: Path) -> None:
     report = validate_category(tmp_path, "bottle")
     assert report["valid"]
     assert report["missing_mask_count"] == 1
+    assert not report["mask_coverage_complete"]
     assert report["warnings"]
 
 
 def test_missing_dataset_is_reported(tmp_path: Path) -> None:
     report = validate_category(tmp_path / "missing", "bottle")
     assert not report["valid"]
+    assert not report["mask_coverage_complete"]
     assert report["errors"]
 
 

@@ -23,7 +23,8 @@ def main() -> int:
     if not report["valid"]:
         print(
             "\nPlace the extracted MVTec AD category under data/mvtec_ad and "
-            "check its official usage conditions.",
+            "check its official CC BY-NC-SA 4.0 non-commercial usage conditions: "
+            "https://www.mvtec.com/research-teaching/datasets/mvtec-ad",
             file=sys.stderr,
         )
         return 1
