@@ -18,6 +18,7 @@ from .preprocessing import (
     validate_image,
 )
 from .convolution import convolve2d
+from .frequency import fft_magnitude_spectrum, frequency_filter
 
 __all__ = [
     "ImageValidationError",
@@ -28,6 +29,8 @@ __all__ = [
     "canny_edges",
     "convolve2d",
     "extract_candidate_regions",
+    "fft_magnitude_spectrum",
+    "frequency_filter",
     "compute_histograms",
     "gaussian_blur",
     "global_threshold",
