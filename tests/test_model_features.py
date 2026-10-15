@@ -64,6 +64,24 @@ def test_default_backbone_reports_missing_weights_without_random_fallback(monkey
         feature_module._load_pretrained_backbone()
 
 
+def test_default_backbone_uses_a_pinned_torchvision_weight_version(monkeypatch):
+    import torchvision.models
+
+    marker = nn.Identity()
+    received = {}
+
+    def load_backbone(**kwargs):
+        received.update(kwargs)
+        return marker
+
+    monkeypatch.setattr(torchvision.models, "resnet18", load_backbone)
+
+    backbone = feature_module._load_pretrained_backbone()
+
+    assert backbone is marker
+    assert received["weights"] is torchvision.models.ResNet18_Weights.IMAGENET1K_V1
+
+
 @pytest.mark.parametrize(
     "images",
     [

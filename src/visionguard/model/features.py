@@ -8,6 +8,8 @@ from torch.nn import functional as F
 
 from visionguard.device import select_device
 
+RESNET18_PRETRAINED_WEIGHTS = "torchvision.models.ResNet18_Weights.IMAGENET1K_V1"
+
 
 class ModelSetupError(RuntimeError):
     """Raised when the required pretrained feature extractor cannot be loaded."""
@@ -23,7 +25,7 @@ def _load_pretrained_backbone() -> nn.Module:
         ) from exc
 
     try:
-        return resnet18(weights=ResNet18_Weights.DEFAULT)
+        return resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
     except (OSError, RuntimeError) as exc:
         raise ModelSetupError(
             "Pretrained ResNet18 weights could not be loaded. Check the local "

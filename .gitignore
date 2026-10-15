@@ -24,6 +24,8 @@ htmlcov/
 /models/**/*.ckpt
 /models/**/*.onnx
 /models/**/*.safetensors
+/models/*.npz
+/models/**/*.npz
 outputs/*
 !outputs/README.md
 *.log
