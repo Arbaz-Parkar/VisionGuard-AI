@@ -33,6 +33,7 @@ class MemoryBank:
     sampling_ratio: float
     seed: int
     input_size: tuple[int, int]
+    preserve_aspect_ratio: bool = True
 
 
 def _validate_sampling(
@@ -237,4 +238,5 @@ def build_memory_bank(
         sampling_ratio=ratio,
         seed=seed_value,
         input_size=input_size,
+        preserve_aspect_ratio=preserve_aspect_ratio,
     )
