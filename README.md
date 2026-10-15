@@ -6,7 +6,7 @@ VisionGuard AI is an MSc Digital Image Processing project exploring how classica
 
 ## Current status
 
-The foundation includes validated experiment settings, CPU/CUDA device selection, logging, dataset discovery, and a seeded normal-only calibration split. The Image Processing Lab currently includes safe image loading, explicit RGB/BGR conversion, resizing, flips/rotation/translation, Gaussian/median filtering, unsharp-mask sharpening, reproducible noise injection, template matching, ORB keypoints and descriptors, CLAHE, histograms, Canny edges, thresholding, morphology, contour candidates, NumPy spatial convolution, 2D FFT spectra, and frequency-domain low/high-pass filters. Rule-based Baseline A is implemented; the statistical reference baseline, trained detector, evaluation outputs, and Streamlit workflow remain later milestones. No model scores or benchmark results are available yet.
+The foundation includes validated experiment settings, CPU/CUDA device selection, logging, dataset discovery, and a seeded normal-only calibration split. The Image Processing Lab currently includes safe image loading, explicit RGB/BGR conversion, resizing, flips/rotation/translation, Gaussian/median filtering, unsharp-mask sharpening, reproducible noise injection, template matching, ORB keypoints and descriptors, CLAHE, histograms, Canny edges, thresholding, morphology, contour candidates, NumPy spatial convolution, 2D FFT spectra, and frequency-domain low/high-pass filters. Both classical baselines are implemented; the trained detector, evaluation outputs, and Streamlit workflow remain later milestones. No model scores or benchmark results are available yet.
 
 ## Planned approach
 

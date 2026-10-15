@@ -24,11 +24,18 @@ from .template_matching import TemplateMatchResult, TemplateMethod, match_templa
 from .transformations import FlipDirection, flip_image, rotate_image, translate_image
 from .features import ORBFeatures, detect_orb_features
 from .baselines import ClassicalDetectionResult, run_rule_based_baseline
+from .reference_baseline import (
+    PerPixelReferenceModel,
+    calibrate_reference_threshold,
+    fit_per_pixel_reference,
+    run_reference_baseline,
+)
 
 __all__ = [
     "ImageValidationError",
     "CandidateRegion",
     "ClassicalDetectionResult",
+    "PerPixelReferenceModel",
     "ResizeTransform",
     "TemplateMatchResult",
     "TemplateMethod",
@@ -39,12 +46,14 @@ __all__ = [
     "add_gaussian_noise",
     "add_salt_pepper_noise",
     "canny_edges",
+    "calibrate_reference_threshold",
     "convolve2d",
     "extract_candidate_regions",
     "detect_orb_features",
     "fft_magnitude_spectrum",
     "flip_image",
     "frequency_filter",
+    "fit_per_pixel_reference",
     "compute_histograms",
     "gaussian_blur",
     "global_threshold",
@@ -59,6 +68,7 @@ __all__ = [
     "resize_image",
     "resize_mask",
     "run_rule_based_baseline",
+    "run_reference_baseline",
     "sharpen_image",
     "to_grayscale",
     "to_rgb",
