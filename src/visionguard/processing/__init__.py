@@ -23,10 +23,12 @@ from .noise import add_gaussian_noise, add_salt_pepper_noise
 from .template_matching import TemplateMatchResult, TemplateMethod, match_template
 from .transformations import FlipDirection, flip_image, rotate_image, translate_image
 from .features import ORBFeatures, detect_orb_features
+from .baselines import ClassicalDetectionResult, run_rule_based_baseline
 
 __all__ = [
     "ImageValidationError",
     "CandidateRegion",
+    "ClassicalDetectionResult",
     "ResizeTransform",
     "TemplateMatchResult",
     "TemplateMethod",
@@ -56,6 +58,7 @@ __all__ = [
     "rotate_image",
     "resize_image",
     "resize_mask",
+    "run_rule_based_baseline",
     "sharpen_image",
     "to_grayscale",
     "to_rgb",
