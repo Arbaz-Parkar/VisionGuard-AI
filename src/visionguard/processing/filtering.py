@@ -1,4 +1,4 @@
-"""Smoothing and local contrast enhancement for uint8 images."""
+"""Smoothing, sharpening, and local contrast enhancement for uint8 images."""
 
 from __future__ import annotations
 
@@ -53,6 +53,52 @@ def median_blur(image: np.ndarray, *, kernel_size: int = 5) -> np.ndarray:
     result = cv2.medianBlur(pixels, kernel_size)
     if pixels.ndim == 3 and pixels.shape[2] == 1 and result.ndim == 2:
         result = result[..., np.newaxis]
+    return result
+
+
+def sharpen_image(
+    image: np.ndarray,
+    *,
+    amount: float = 1.0,
+    sigma: float = 1.0,
+) -> np.ndarray:
+    """Sharpen with an unsharp mask while preserving an RGBA alpha channel.
+
+    ``sigma`` controls how much Gaussian blur is subtracted from the original;
+    ``amount`` controls the strength of that high-frequency detail. Amount zero
+    returns an unchanged copy. Values are clipped back to the uint8 range.
+    """
+    pixels = validate_image(image)
+    if (
+        isinstance(amount, bool)
+        or not isinstance(amount, (int, float))
+        or not math.isfinite(amount)
+        or not 0 <= amount <= 5
+    ):
+        raise ImageValidationError("amount must be a finite number from 0 through 5.")
+    if (
+        isinstance(sigma, bool)
+        or not isinstance(sigma, (int, float))
+        or not math.isfinite(sigma)
+        or not 0 < sigma <= 100
+    ):
+        raise ImageValidationError("sigma must be a finite number greater than 0 and at most 100.")
+
+    if amount == 0:
+        return pixels.copy()
+
+    result = pixels.copy()
+    target = pixels[..., :3] if pixels.ndim == 3 and pixels.shape[2] == 4 else pixels
+    blurred = cv2.GaussianBlur(target, (0, 0), sigmaX=float(sigma))
+    original_float = target.astype(np.float32)
+    detail = original_float - blurred.astype(np.float32)
+    sharpened = np.clip(
+        np.rint(original_float + float(amount) * detail), 0, 255
+    ).astype(np.uint8)
+    if result.ndim == 3 and result.shape[2] == 4:
+        result[..., :3] = sharpened
+    else:
+        result[...] = sharpened
     return result
 
 

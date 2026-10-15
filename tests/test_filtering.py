@@ -6,6 +6,7 @@ from visionguard.processing import (
     apply_clahe,
     gaussian_blur,
     median_blur,
+    sharpen_image,
 )
 
 
@@ -28,6 +29,33 @@ def test_median_blur_removes_an_isolated_impulse():
 
     assert filtered[3, 3] == 0
     assert filtered.shape == image.shape
+
+
+def test_sharpen_image_increases_contrast_at_a_blurred_edge():
+    edge = np.zeros((15, 16), dtype=np.uint8)
+    edge[:, 8:] = 255
+    blurred = gaussian_blur(edge, kernel_size=7, sigma=1.2)
+
+    sharpened = sharpen_image(blurred, amount=1.5, sigma=1.0)
+
+    assert sharpened[:, 7].mean() < blurred[:, 7].mean()
+    assert sharpened[:, 8].mean() > blurred[:, 8].mean()
+    assert sharpened.shape == edge.shape
+    assert sharpened.dtype == edge.dtype
+
+
+def test_sharpening_zero_amount_returns_copy_and_preserves_rgba_alpha():
+    gray = np.arange(20, dtype=np.uint8).reshape(4, 5)
+    rgba = np.full((8, 8, 4), 100, dtype=np.uint8)
+    rgba[..., 3] = np.arange(8, dtype=np.uint8)[:, None] * 30
+
+    unchanged = sharpen_image(gray, amount=0)
+    sharpened = sharpen_image(rgba)
+
+    np.testing.assert_array_equal(unchanged, gray)
+    assert unchanged is not gray
+    np.testing.assert_array_equal(sharpened[..., 3], rgba[..., 3])
+    assert sharpened.shape == rgba.shape
 
 
 def test_clahe_accepts_grayscale_and_preserves_rgba_alpha():
@@ -66,6 +94,9 @@ def test_clahe_color_order_produces_equivalent_rgb_and_bgr_results():
         lambda image: gaussian_blur(image, kernel_size=2),
         lambda image: gaussian_blur(image, sigma=-1),
         lambda image: median_blur(image, kernel_size=1),
+        lambda image: sharpen_image(image, amount=-1),
+        lambda image: sharpen_image(image, amount=6),
+        lambda image: sharpen_image(image, sigma=0),
         lambda image: apply_clahe(image, clip_limit=0),
         lambda image: apply_clahe(image, tile_grid_size=(0, 8)),
         lambda image: apply_clahe(image, color_order="XYZ"),

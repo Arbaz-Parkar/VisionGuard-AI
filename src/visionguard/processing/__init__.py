@@ -1,6 +1,6 @@
 """Classical image-processing helpers used by VisionGuard AI."""
 
-from .filtering import apply_clahe, gaussian_blur, median_blur
+from .filtering import apply_clahe, gaussian_blur, median_blur, sharpen_image
 from .histograms import compute_histograms, plot_histograms
 from .edges import canny_edges
 from .thresholding import adaptive_threshold, global_threshold, otsu_threshold
@@ -53,6 +53,7 @@ __all__ = [
     "rotate_image",
     "resize_image",
     "resize_mask",
+    "sharpen_image",
     "to_grayscale",
     "to_rgb",
     "translate_image",
