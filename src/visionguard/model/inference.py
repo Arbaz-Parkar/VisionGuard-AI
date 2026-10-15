@@ -42,7 +42,7 @@ class PatchDetectionResult:
     raw_map: np.ndarray
     display_map: np.ndarray
     mask: np.ndarray
-    pixel_threshold: float
+    pixel_threshold: float | None
     regions: tuple[CandidateRegion, ...]
     timings: PatchInferenceTimings
     device: str
@@ -155,11 +155,15 @@ class PatchAnomalyScorer:
         self,
         image: np.ndarray,
         *,
-        pixel_threshold: float,
+        pixel_threshold: float | None = None,
         min_region_area: float = 20.0,
     ) -> PatchDetectionResult:
-        """Score one image and apply a pixel threshold calibrated on normal data."""
-        if (
+        """Score one image, optionally applying a calibrated pixel threshold.
+
+        With ``pixel_threshold=None``, this returns continuous scores for
+        calibration and leaves the binary mask and regions empty.
+        """
+        if pixel_threshold is not None and (
             isinstance(pixel_threshold, bool)
             or not isinstance(pixel_threshold, (int, float))
             or not math.isfinite(pixel_threshold)
@@ -234,13 +238,15 @@ class PatchAnomalyScorer:
         else:
             display_map = np.zeros_like(raw_map, dtype=np.float32)
 
-        threshold_mask = np.where(raw_map > pixel_threshold, 255, 0).astype(np.uint8)
-        regions = tuple(
-            extract_candidate_regions(threshold_mask, min_area=float(min_region_area))
-        )
-        mask = np.zeros_like(threshold_mask)
-        for region in regions:
-            cv2.drawContours(mask, [region.contour], -1, 255, thickness=cv2.FILLED)
+        mask = np.zeros_like(raw_map, dtype=np.uint8)
+        regions: tuple[CandidateRegion, ...] = ()
+        if pixel_threshold is not None:
+            threshold_mask = np.where(raw_map > pixel_threshold, 255, 0).astype(np.uint8)
+            regions = tuple(
+                extract_candidate_regions(threshold_mask, min_area=float(min_region_area))
+            )
+            for region in regions:
+                cv2.drawContours(mask, [region.contour], -1, 255, thickness=cv2.FILLED)
 
         image_score = (
             float(np.max(raw_map))
@@ -261,7 +267,9 @@ class PatchAnomalyScorer:
             raw_map=raw_map,
             display_map=display_map,
             mask=mask,
-            pixel_threshold=float(pixel_threshold),
+            pixel_threshold=(
+                None if pixel_threshold is None else float(pixel_threshold)
+            ),
             regions=regions,
             timings=timings,
             device=str(self.device),
