@@ -21,6 +21,7 @@ from .convolution import convolve2d
 from .frequency import fft_magnitude_spectrum, frequency_filter
 from .noise import add_gaussian_noise, add_salt_pepper_noise
 from .template_matching import TemplateMatchResult, TemplateMethod, match_template
+from .transformations import FlipDirection, flip_image, rotate_image, translate_image
 
 __all__ = [
     "ImageValidationError",
@@ -28,6 +29,7 @@ __all__ = [
     "ResizeTransform",
     "TemplateMatchResult",
     "TemplateMethod",
+    "FlipDirection",
     "apply_clahe",
     "adaptive_threshold",
     "add_gaussian_noise",
@@ -36,6 +38,7 @@ __all__ = [
     "convolve2d",
     "extract_candidate_regions",
     "fft_magnitude_spectrum",
+    "flip_image",
     "frequency_filter",
     "compute_histograms",
     "gaussian_blur",
@@ -47,9 +50,11 @@ __all__ = [
     "plot_histograms",
     "otsu_threshold",
     "restore_map",
+    "rotate_image",
     "resize_image",
     "resize_mask",
     "to_grayscale",
     "to_rgb",
+    "translate_image",
     "validate_image",
 ]
