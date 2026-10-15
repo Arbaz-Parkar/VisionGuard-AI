@@ -22,6 +22,7 @@ from .frequency import fft_magnitude_spectrum, frequency_filter
 from .noise import add_gaussian_noise, add_salt_pepper_noise
 from .template_matching import TemplateMatchResult, TemplateMethod, match_template
 from .transformations import FlipDirection, flip_image, rotate_image, translate_image
+from .features import ORBFeatures, detect_orb_features
 
 __all__ = [
     "ImageValidationError",
@@ -30,6 +31,7 @@ __all__ = [
     "TemplateMatchResult",
     "TemplateMethod",
     "FlipDirection",
+    "ORBFeatures",
     "apply_clahe",
     "adaptive_threshold",
     "add_gaussian_noise",
@@ -37,6 +39,7 @@ __all__ = [
     "canny_edges",
     "convolve2d",
     "extract_candidate_regions",
+    "detect_orb_features",
     "fft_magnitude_spectrum",
     "flip_image",
     "frequency_filter",
