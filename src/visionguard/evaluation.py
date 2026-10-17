@@ -77,7 +77,11 @@ class EvaluationReport:
 
 
 def _binary_metrics(
-    labels: np.ndarray, scores: np.ndarray, threshold: float
+    labels: np.ndarray,
+    scores: np.ndarray,
+    threshold: float,
+    *,
+    predictions: np.ndarray | None = None,
 ) -> BinaryMetricSummary:
     truth = np.asarray(labels, dtype=np.uint8).reshape(-1)
     values = np.asarray(scores).reshape(-1)
@@ -99,7 +103,14 @@ def _binary_metrics(
             sample_count=0,
         )
 
-    predicted = values > threshold
+    if predictions is None:
+        predicted = values > threshold
+    else:
+        predicted = np.asarray(predictions, dtype=bool).reshape(-1)
+        if predicted.size != truth.size:
+            raise EvaluationError(
+                "Metric predictions and labels must have the same number of values."
+            )
     positive = truth == 1
     negative = ~positive
     true_positive = int(np.count_nonzero(predicted & positive))

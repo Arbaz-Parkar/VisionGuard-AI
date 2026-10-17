@@ -6,7 +6,7 @@ VisionGuard AI is an MSc Digital Image Processing project exploring how classica
 
 ## Current status
 
-The foundation includes validated experiment settings, CPU/CUDA device selection, logging, dataset discovery, and a seeded normal-only calibration split. The Image Processing Lab currently includes safe image loading, explicit RGB/BGR conversion, resizing, flips/rotation/translation, Gaussian/median filtering, unsharp-mask sharpening, reproducible noise injection, template matching, ORB keypoints and descriptors, CLAHE, histograms, Canny edges, thresholding, morphology, contour candidates, NumPy spatial convolution, 2D FFT spectra, and frequency-domain low/high-pass filters. Both classical baselines are implemented. A frozen pretrained ResNet18 extractor produces layer2/layer3 patch embeddings, and a normal-only memory-bank builder supports random and greedy coreset sampling. Patch scoring, anomaly-map construction, image/pixel threshold calibration, artifact save/load, test-split evaluation with JSON/CSV reports, and a local Streamlit interface for AI, rule-based, and calibrated reference inspection plus report viewing are implemented. No model scores or benchmark results are available until an artifact is evaluated on the local dataset.
+The foundation includes validated experiment settings, CPU/CUDA device selection, logging, dataset discovery, and a seeded normal-only calibration split. The Image Processing Lab currently includes safe image loading, explicit RGB/BGR conversion, resizing, flips/rotation/translation, Gaussian/median filtering, unsharp-mask sharpening, reproducible noise injection, template matching, ORB keypoints and descriptors, CLAHE, histograms, Canny edges, thresholding, morphology, contour candidates, NumPy spatial convolution, 2D FFT spectra, and frequency-domain low/high-pass filters. Both classical baselines are implemented. A frozen pretrained ResNet18 extractor produces layer2/layer3 patch embeddings, and a normal-only memory-bank builder supports random and greedy coreset sampling. Patch scoring, anomaly-map construction, image/pixel threshold calibration, artifact save/load, test-split evaluation for the patch detector and classical baselines, and a local Streamlit inspection/report interface are implemented. No benchmark results are available until the evaluators are run on the local dataset.
 
 ## Planned approach
 
@@ -77,6 +77,16 @@ By default, the command reads the dataset root and category from `configs/defaul
 
 Image metrics include every test image. Pixel metrics use normal test images as all-normal masks and anomalous images only when their ground-truth masks exist; missing masks are counted and excluded from pixel metrics. AUROC is calculated from continuous scores. Precision, recall, F1, and confusion counts use the calibrated thresholds stored in the artifact. AUC is reported as unavailable when the evaluated labels contain only one class. Test data is used only for final evaluation, never for memory-bank construction or calibration. Reports are generated only by running the command; no example benchmark scores are checked in.
 
+## Evaluate the classical baselines
+
+Run both classical methods on the official test split:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\evaluate_classical.py
+```
+
+The evaluator fits the per-pixel reference model on the seeded normal training subset, calibrates both image thresholds and the reference pixel threshold on the disjoint normal holdout, then evaluates the test images and masks. It uses the configured threshold rules (`percentile` or `mean_plus_3std`); the rule-based method keeps its per-image Otsu pixel mask. Pixel precision/recall/F1 use each method's final mask, while pixel AUROC uses its continuous score map. Reports are written to `outputs/classical/<category>/metrics.json` and `per_image.csv`. Use `--dataset-root`, `--category`, or `--output-dir` to override the configured paths.
+
 ## Run the local dashboard
 
 Launch the Streamlit interface from the project root:
@@ -85,7 +95,7 @@ Launch the Streamlit interface from the project root:
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-Upload one image above the tabs, then use it in an inspection tab. **Inspect image** displays the detector score, calibrated decision, heatmap overlay, and candidate-region details. **Classical baseline** runs local-contrast detection with per-image Otsu thresholding. **Reference baseline** fits pixel statistics on the seeded normal training split and calibrates its pixel threshold on the disjoint held-out normal split; it does not use test images or masks and requires the uploaded image to match the training-image dimensions. **Evaluation report** reads the saved JSON and CSV output from the evaluation command above. Use a saved `.npz` detector artifact in the sidebar for AI inspection; the first inspection may load the pinned pretrained ResNet18 weights. Uploaded inspection images are separate from test-split evaluation and do not change its metrics.
+Upload one image above the tabs, then use it in an inspection tab. **Inspect image** displays the detector score, calibrated decision, heatmap overlay, and candidate-region details. **Classical baseline** runs local-contrast detection with per-image Otsu thresholding. **Reference baseline** fits pixel statistics on the seeded normal training split and calibrates its pixel threshold on the disjoint held-out normal split; it does not use test images or masks and requires the uploaded image to match the training-image dimensions. **Evaluation report** reads saved JSON and CSV reports; set its report directory to `outputs/classical/<category>` to view the classical comparison. Use a saved `.npz` detector artifact in the sidebar for AI inspection; the first inspection may load the pinned pretrained ResNet18 weights. Uploaded inspection images are separate from test-split evaluation and do not change its metrics.
 
 ## Development checks
 

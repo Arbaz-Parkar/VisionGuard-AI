@@ -75,6 +75,7 @@ def _load_reference_model(
     calibration_fraction: float,
     calibration_seed: int,
     calibration_percentile: float,
+    calibration_rule: str,
     standard_deviation_floor: float,
     normal_fingerprint: tuple[tuple[str, int, int], ...],
 ):
@@ -92,6 +93,7 @@ def _load_reference_model(
         _iter_loaded_images(split.calibration_images),
         percentile=calibration_percentile,
         standard_deviation_floor=standard_deviation_floor,
+        rule=calibration_rule,
     )
     return model, threshold, len(split.memory_bank_images), len(split.calibration_images)
 
@@ -362,6 +364,7 @@ def _render_reference_baseline(
     calibration_fraction = float(config["dataset"]["calibration_fraction"])
     calibration_seed = int(config["dataset"]["calibration_seed"])
     calibration_percentile = float(config["thresholds"]["pixel_percentile"])
+    calibration_rule = str(config["thresholds"]["pixel_rule"])
     standard_deviation_floor = 1.0
     minimum_region_area = float(config["classical"]["min_region_area"])
     signature = (
@@ -371,6 +374,7 @@ def _render_reference_baseline(
         calibration_fraction,
         calibration_seed,
         calibration_percentile,
+        calibration_rule,
         standard_deviation_floor,
         minimum_region_area,
     )
@@ -414,6 +418,7 @@ def _render_reference_baseline(
                         calibration_fraction,
                         calibration_seed,
                         calibration_percentile,
+                        calibration_rule,
                         standard_deviation_floor,
                         fingerprint,
                     )
@@ -470,8 +475,8 @@ def _render_reference_baseline(
 
     st.caption(
         f"Reference fit: {training_count} normal training images · "
-        f"calibration: {calibration_count} disjoint normal images at "
-        f"the {calibration_percentile:g}th percentile"
+        f"calibration: {calibration_count} disjoint normal images · "
+        f"pixel threshold rule: {calibration_rule}"
     )
     score_column, threshold_column, count_column, timing_column = st.columns(4)
     score_column.metric("Maximum pixel deviation", f"{result.image_score:.3f}")
@@ -531,7 +536,8 @@ def _render_report(config: dict[str, object]) -> None:
     if not summary_path.is_file():
         st.info(
             f"No evaluation report exists at `{summary_path}`. Run "
-            "`scripts/evaluate_detector.py` after saving an artifact and setting up the dataset."
+            "`scripts/evaluate_detector.py` or `scripts/evaluate_classical.py` after "
+            "setting up the dataset."
         )
         return
 
@@ -553,17 +559,47 @@ def _render_report(config: dict[str, object]) -> None:
     count_columns[3].metric("Missing masks", summary.get("missing_mask_count", 0))
     image_metrics = summary.get("image_metrics")
     pixel_metrics = summary.get("pixel_metrics")
-    if not isinstance(image_metrics, dict) or not isinstance(pixel_metrics, dict):
+    if isinstance(image_metrics, dict) and isinstance(pixel_metrics, dict):
+        _render_metric_group("Image-level metrics", image_metrics)
+        _render_metric_group("Pixel-level metrics", pixel_metrics)
+        st.caption(
+            "Thresholds used: "
+            f"image {summary.get('image_threshold', 'unknown')} · "
+            f"pixel {summary.get('pixel_threshold', 'unknown')}"
+        )
+    elif isinstance(summary.get("rule_based"), dict) and isinstance(
+        summary.get("reference"), dict
+    ):
+        for method_name, method_label in (
+            ("rule_based", "Rule-based baseline"),
+            ("reference", "Per-pixel reference baseline"),
+        ):
+            method = summary[method_name]
+            method_image_metrics = method.get("image_metrics")
+            method_pixel_metrics = method.get("pixel_metrics")
+            if not isinstance(method_image_metrics, dict) or not isinstance(
+                method_pixel_metrics, dict
+            ):
+                st.error(f"The {method_label} report is missing metrics.")
+                return
+            st.divider()
+            st.subheader(method_label)
+            _render_metric_group("Image-level metrics", method_image_metrics)
+            _render_metric_group("Pixel-level metrics", method_pixel_metrics)
+            pixel_threshold = method.get("pixel_threshold")
+            pixel_threshold_text = (
+                f"{pixel_threshold} ({method.get('pixel_threshold_method', 'unknown')})"
+                if pixel_threshold is not None
+                else str(method.get("pixel_threshold_method", "unknown"))
+            )
+            st.caption(
+                f"Image threshold: {method.get('image_threshold', 'unknown')} "
+                f"({method.get('image_threshold_method', 'unknown')}) · "
+                f"Pixel threshold: {pixel_threshold_text}"
+            )
+    else:
         st.error("The evaluation summary is missing image or pixel metrics.")
         return
-
-    _render_metric_group("Image-level metrics", image_metrics)
-    _render_metric_group("Pixel-level metrics", pixel_metrics)
-    st.caption(
-        "Thresholds used: "
-        f"image {summary.get('image_threshold', 'unknown')} · "
-        f"pixel {summary.get('pixel_threshold', 'unknown')}"
-    )
 
     if rows_path.is_file():
         try:

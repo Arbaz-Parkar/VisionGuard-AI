@@ -146,11 +146,19 @@ def calibrate_reference_threshold(
     *,
     percentile: float = 99.5,
     standard_deviation_floor: float = 1.0,
+    rule: str = "percentile",
 ) -> float:
-    """Choose a pixel threshold from held-out normal calibration score maps."""
-    percentile_value = _positive_finite("percentile", percentile)
-    if percentile_value > 100:
-        raise ImageValidationError("percentile must be greater than 0 and at most 100.")
+    """Choose a pixel threshold from held-out normal calibration score maps.
+
+    ``rule`` may select the configured percentile or mean plus three population
+    standard deviations across the held-out normal pixel scores.
+    """
+    if rule not in {"percentile", "mean_plus_3std"}:
+        raise ImageValidationError("rule must be 'percentile' or 'mean_plus_3std'.")
+    if rule == "percentile":
+        percentile_value = _positive_finite("percentile", percentile)
+        if percentile_value > 100:
+            raise ImageValidationError("percentile must be greater than 0 and at most 100.")
     floor = _positive_finite("standard_deviation_floor", standard_deviation_floor)
     if floor < 1e-6:
         raise ImageValidationError("standard_deviation_floor must be at least 1e-6.")
@@ -167,7 +175,10 @@ def calibrate_reference_threshold(
         )
     if not flattened_maps:
         raise ImageValidationError("At least one normal calibration image is required.")
-    return float(np.percentile(np.concatenate(flattened_maps), percentile_value))
+    values = np.concatenate(flattened_maps)
+    if rule == "percentile":
+        return float(np.percentile(values, percentile_value))
+    return float(np.mean(values, dtype=np.float64) + 3.0 * np.std(values, dtype=np.float64))
 
 
 def run_reference_baseline(
