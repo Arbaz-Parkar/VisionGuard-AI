@@ -1,0 +1,324 @@
+"""Local Streamlit interface for image inspection and evaluation reports."""
+
+from __future__ import annotations
+
+import csv
+import hashlib
+import json
+from pathlib import Path
+
+import cv2
+import numpy as np
+import streamlit as st
+
+from visionguard.config import ConfigError, load_config, resolve_project_path
+from visionguard.evaluation import EvaluationError
+from visionguard.model import (
+    ArtifactError,
+    ModelSetupError,
+    PatchDetectorArtifact,
+    PatchAnomalyScorer,
+    ResNet18PatchFeatureExtractor,
+    load_patch_artifact,
+)
+from visionguard.processing import ImageValidationError, load_image, to_rgb
+
+
+@st.cache_resource(show_spinner=False)
+def _load_detector(
+    artifact_path: str,
+    artifact_modified_ns: int,
+    device_preference: str,
+) -> tuple[PatchDetectorArtifact, PatchAnomalyScorer]:
+    """Cache the loaded artifact, frozen extractor, and scorer across reruns."""
+    del artifact_modified_ns  # Included in the cache key to notice artifact replacement.
+    artifact = load_patch_artifact(artifact_path)
+    extractor = ResNet18PatchFeatureExtractor(device_preference=device_preference)
+    return artifact, artifact.build_scorer(extractor)
+
+
+def _heatmap_rgb(display_map: np.ndarray) -> np.ndarray:
+    values = np.clip(display_map, 0.0, 1.0)
+    heatmap_bgr = cv2.applyColorMap(
+        np.rint(values * 255).astype(np.uint8), cv2.COLORMAP_TURBO
+    )
+    return cv2.cvtColor(heatmap_bgr, cv2.COLOR_BGR2RGB)
+
+
+def _render_metric_group(label: str, metrics: dict[str, object]) -> None:
+    st.subheader(label)
+    columns = st.columns(4)
+    auroc = metrics.get("auroc")
+    columns[0].metric("AUROC", "Unavailable" if auroc is None else f"{float(auroc):.4f}")
+    columns[1].metric("Precision", f"{float(metrics.get('precision', 0.0)):.4f}")
+    columns[2].metric("Recall", f"{float(metrics.get('recall', 0.0)):.4f}")
+    columns[3].metric("F1", f"{float(metrics.get('f1', 0.0)):.4f}")
+    if auroc is None and metrics.get("auroc_unavailable_reason"):
+        st.caption(str(metrics["auroc_unavailable_reason"]))
+    counts = {
+        "True negative": metrics.get("true_negative", 0),
+        "False positive": metrics.get("false_positive", 0),
+        "False negative": metrics.get("false_negative", 0),
+        "True positive": metrics.get("true_positive", 0),
+        "Samples": metrics.get("sample_count", 0),
+    }
+    st.caption(" · ".join(f"{name}: {value}" for name, value in counts.items()))
+
+
+def _render_inspection(config: dict[str, object], artifact_path_text: str, device: str) -> None:
+    st.header("Inspect an image")
+    st.write(
+        "Upload one image to view its anomaly score, calibrated decision, heatmap, "
+        "and candidate regions. The score is not a defect probability."
+    )
+    uploaded = st.file_uploader(
+        "Inspection image",
+        type=["png", "jpg", "jpeg", "bmp", "tif", "tiff"],
+        help="Images are processed locally by the configured detector.",
+    )
+
+    image_bytes = uploaded.getvalue() if uploaded is not None else None
+    upload_digest = hashlib.sha256(image_bytes).hexdigest() if image_bytes else None
+    artifact_path = (
+        resolve_project_path(artifact_path_text) if artifact_path_text.strip() else None
+    )
+    artifact_exists = artifact_path is not None and artifact_path.is_file()
+    artifact_modified_ns = artifact_path.stat().st_mtime_ns if artifact_exists else 0
+    signature = (
+        upload_digest,
+        str(artifact_path.resolve()) if artifact_path is not None else "",
+        artifact_modified_ns,
+        device,
+    )
+    if st.session_state.get("inspection_signature") != signature:
+        st.session_state.pop("inspection_result", None)
+        st.session_state.pop("inspection_image", None)
+        st.session_state["inspection_signature"] = signature
+
+    if not artifact_exists:
+        st.info(
+            "No detector artifact was found at the selected path. Create and save a "
+            "`.npz` artifact before running an inspection."
+        )
+
+    if uploaded is not None:
+        try:
+            preview_image = load_image(image_bytes)
+            if st.session_state.get("inspection_result") is None:
+                st.image(preview_image, caption=uploaded.name, use_container_width=True)
+        except ImageValidationError as exc:
+            st.error(f"Unable to read this image: {exc}")
+            preview_image = None
+    else:
+        preview_image = None
+
+    inspect_clicked = st.button(
+        "Inspect image",
+        type="primary",
+        disabled=uploaded is None or not artifact_exists or preview_image is None,
+    )
+    if inspect_clicked and uploaded is not None and artifact_path is not None:
+        try:
+            with st.spinner("Loading the detector and scoring the image..."):
+                artifact, scorer = _load_detector(
+                    str(artifact_path.resolve()), artifact_modified_ns, device
+                )
+                image = load_image(image_bytes)
+                result = scorer.run(
+                    image,
+                    pixel_threshold=artifact.thresholds.pixel_threshold,
+                    min_region_area=float(config["classical"]["min_region_area"]),
+                )
+            st.session_state["inspection_result"] = (artifact, result)
+            st.session_state["inspection_image"] = image
+        except (
+            ArtifactError,
+            ModelSetupError,
+            ImageValidationError,
+            EvaluationError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            st.error(f"Inspection failed: {exc}")
+
+    stored = st.session_state.get("inspection_result")
+    stored_image = st.session_state.get("inspection_image")
+    if stored is None or stored_image is None or upload_digest is None:
+        return
+
+    artifact, result = stored
+    is_anomaly = result.image_score > artifact.thresholds.image_threshold
+    st.divider()
+    score_column, decision_column, timing_column = st.columns(3)
+    score_column.metric(
+        "Image anomaly score",
+        f"{result.image_score:.5f}",
+        help="Continuous model score; it is not a calibrated probability.",
+    )
+    decision_column.metric(
+        "Calibrated decision",
+        "Anomaly flagged" if is_anomaly else "Below threshold",
+        help=f"Image threshold: {artifact.thresholds.image_threshold:.5f}",
+    )
+    timing_column.metric("Inference time", f"{result.timings.total_ms:.1f} ms")
+
+    heatmap = _heatmap_rgb(result.display_map)
+    overlay = cv2.addWeighted(to_rgb(stored_image), 0.58, heatmap, 0.42, 0)
+    image_column, map_column, overlay_column = st.columns(3)
+    image_column.image(stored_image, caption="Input", use_container_width=True)
+    map_column.image(heatmap, caption="Anomaly heatmap", use_container_width=True)
+    overlay_column.image(overlay, caption="Heatmap overlay", use_container_width=True)
+    st.caption(
+        f"Pixel threshold: {artifact.thresholds.pixel_threshold:.5f} · "
+        f"Inference device: {result.device} · "
+        f"Regions shown after minimum area filtering: {len(result.regions)}"
+    )
+
+    if result.regions:
+        region_rows = [
+            {
+                "Region": index,
+                "Bounding box (x, y, width, height)": region.bounding_box,
+                "Contour area": round(region.contour_area, 2),
+                "Centroid (x, y)": tuple(round(value, 2) for value in region.centroid),
+            }
+            for index, region in enumerate(result.regions, start=1)
+        ]
+        st.dataframe(region_rows, hide_index=True, use_container_width=True)
+    else:
+        st.caption("No regions met the configured minimum area at the calibrated pixel threshold.")
+    with st.expander("View thresholded candidate mask"):
+        st.image(
+            result.mask,
+            caption="Regions retained after minimum area filtering",
+            use_container_width=True,
+        )
+
+
+def _render_report(config: dict[str, object]) -> None:
+    st.header("Evaluation report")
+    st.write(
+        "View reports generated from the official test split. These metrics describe "
+        "the evaluated artifact and dataset; uploading an inspection image does not change them."
+    )
+    default_report_dir = (
+        resolve_project_path(config["paths"]["outputs"])
+        / str(config["dataset"]["category"])
+    )
+    report_dir_text = st.text_input(
+        "Report directory",
+        value=str(default_report_dir),
+        help="The directory containing metrics.json and per_image.csv.",
+    )
+    report_dir = resolve_project_path(report_dir_text)
+    summary_path = report_dir / "metrics.json"
+    rows_path = report_dir / "per_image.csv"
+    if not summary_path.is_file():
+        st.info(
+            f"No evaluation report exists at `{summary_path}`. Run "
+            "`scripts/evaluate_detector.py` after saving an artifact and setting up the dataset."
+        )
+        return
+
+    try:
+        with summary_path.open("r", encoding="utf-8") as stream:
+            summary = json.load(stream)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        st.error(f"Unable to read the evaluation summary: {exc}")
+        return
+    if not isinstance(summary, dict):
+        st.error("The evaluation summary must contain a JSON object.")
+        return
+
+    st.subheader(f"Category: {summary.get('category', 'unknown')}")
+    count_columns = st.columns(4)
+    count_columns[0].metric("Evaluated images", summary.get("evaluated_image_count", 0))
+    count_columns[1].metric("Normal images", summary.get("normal_image_count", 0))
+    count_columns[2].metric("Anomalous images", summary.get("anomalous_image_count", 0))
+    count_columns[3].metric("Missing masks", summary.get("missing_mask_count", 0))
+    image_metrics = summary.get("image_metrics")
+    pixel_metrics = summary.get("pixel_metrics")
+    if not isinstance(image_metrics, dict) or not isinstance(pixel_metrics, dict):
+        st.error("The evaluation summary is missing image or pixel metrics.")
+        return
+
+    _render_metric_group("Image-level metrics", image_metrics)
+    _render_metric_group("Pixel-level metrics", pixel_metrics)
+    st.caption(
+        "Thresholds used: "
+        f"image {summary.get('image_threshold', 'unknown')} · "
+        f"pixel {summary.get('pixel_threshold', 'unknown')}"
+    )
+
+    if rows_path.is_file():
+        try:
+            with rows_path.open("r", encoding="utf-8-sig", newline="") as stream:
+                image_rows = list(csv.DictReader(stream))
+            st.subheader("Per-image results")
+            st.dataframe(image_rows, hide_index=True, use_container_width=True)
+        except (OSError, csv.Error, UnicodeDecodeError) as exc:
+            st.error(f"Unable to read per-image results: {exc}")
+    else:
+        st.warning(f"Per-image CSV was not found: {rows_path}")
+
+
+def main() -> None:
+    st.set_page_config(
+        page_title="VisionGuard AI",
+        page_icon="🔎",
+        layout="wide",
+    )
+    st.title("VisionGuard AI")
+    st.caption("Local visual inspection with a PatchCore-inspired anomaly detector")
+
+    try:
+        config = load_config()
+    except ConfigError as exc:
+        st.error(f"Unable to load project configuration: {exc}")
+        st.stop()
+
+    category = str(config["dataset"]["category"])
+    default_artifact = (
+        resolve_project_path(config["paths"]["artifacts"])
+        / f"{category}_patch_detector.npz"
+    )
+    available_devices = ["auto", "cpu"]
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            available_devices.append("cuda")
+    except ImportError:
+        pass
+    configured_device = str(config["model"]["device"])
+    default_device = configured_device if configured_device in available_devices else "auto"
+
+    with st.sidebar:
+        st.header("Detector settings")
+        artifact_path_text = st.text_input(
+            "Artifact path",
+            value=str(default_artifact),
+            help="Path to a VisionGuard .npz artifact. Model files are loaded without pickle.",
+        )
+        device = st.selectbox(
+            "Inference device",
+            available_devices,
+            index=available_devices.index(default_device),
+        )
+        st.caption(f"Configured dataset category: {category}")
+        st.divider()
+        st.caption(
+            "This research prototype supports human review. An anomaly flag is not "
+            "a manufacturing decision."
+        )
+
+    inspection_tab, report_tab = st.tabs(["Inspect image", "Evaluation report"])
+    with inspection_tab:
+        _render_inspection(config, artifact_path_text, device)
+    with report_tab:
+        _render_report(config)
+
+
+if __name__ == "__main__":
+    main()

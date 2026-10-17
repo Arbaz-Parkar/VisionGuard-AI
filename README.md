@@ -6,7 +6,7 @@ VisionGuard AI is an MSc Digital Image Processing project exploring how classica
 
 ## Current status
 
-The foundation includes validated experiment settings, CPU/CUDA device selection, logging, dataset discovery, and a seeded normal-only calibration split. The Image Processing Lab currently includes safe image loading, explicit RGB/BGR conversion, resizing, flips/rotation/translation, Gaussian/median filtering, unsharp-mask sharpening, reproducible noise injection, template matching, ORB keypoints and descriptors, CLAHE, histograms, Canny edges, thresholding, morphology, contour candidates, NumPy spatial convolution, 2D FFT spectra, and frequency-domain low/high-pass filters. Both classical baselines are implemented. A frozen pretrained ResNet18 extractor produces layer2/layer3 patch embeddings, and a normal-only memory-bank builder supports random and greedy coreset sampling. Patch scoring, anomaly-map construction, image/pixel threshold calibration, artifact save/load, and test-split evaluation with JSON/CSV reports are implemented. The Streamlit workflow remains a later milestone. No model scores or benchmark results are available until an artifact is evaluated on the local dataset.
+The foundation includes validated experiment settings, CPU/CUDA device selection, logging, dataset discovery, and a seeded normal-only calibration split. The Image Processing Lab currently includes safe image loading, explicit RGB/BGR conversion, resizing, flips/rotation/translation, Gaussian/median filtering, unsharp-mask sharpening, reproducible noise injection, template matching, ORB keypoints and descriptors, CLAHE, histograms, Canny edges, thresholding, morphology, contour candidates, NumPy spatial convolution, 2D FFT spectra, and frequency-domain low/high-pass filters. Both classical baselines are implemented. A frozen pretrained ResNet18 extractor produces layer2/layer3 patch embeddings, and a normal-only memory-bank builder supports random and greedy coreset sampling. Patch scoring, anomaly-map construction, image/pixel threshold calibration, artifact save/load, test-split evaluation with JSON/CSV reports, and a local Streamlit inspection/report interface are implemented. No model scores or benchmark results are available until an artifact is evaluated on the local dataset.
 
 ## Planned approach
 
@@ -76,6 +76,16 @@ Once a `.npz` artifact has been created, evaluate it on that category's official
 By default, the command reads the dataset root and category from `configs/default.yaml`, loads `models/<category>_patch_detector.npz`, and writes `outputs/<category>/metrics.json` and `outputs/<category>/per_image.csv`. Pass `--artifact`, `--dataset-root`, or `--output-dir` to override those paths. The artifact determines which category is evaluated. The first run may need to load the pinned pretrained ResNet18 weights.
 
 Image metrics include every test image. Pixel metrics use normal test images as all-normal masks and anomalous images only when their ground-truth masks exist; missing masks are counted and excluded from pixel metrics. AUROC is calculated from continuous scores. Precision, recall, F1, and confusion counts use the calibrated thresholds stored in the artifact. AUC is reported as unavailable when the evaluated labels contain only one class. Test data is used only for final evaluation, never for memory-bank construction or calibration. Reports are generated only by running the command; no example benchmark scores are checked in.
+
+## Run the local dashboard
+
+Launch the Streamlit interface from the project root:
+
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run app.py
+```
+
+The **Inspect image** tab accepts one local image and displays the detector score, calibrated decision, heatmap overlay, and candidate-region details. The **Evaluation report** tab reads the saved JSON and CSV output from the evaluation command above. Use a saved `.npz` detector artifact in the sidebar; the first inspection may load the pinned pretrained ResNet18 weights. Uploaded inspection images are separate from test-split evaluation and do not change its metrics.
 
 ## Development checks
 
