@@ -13,6 +13,7 @@ import numpy as np
 import streamlit as st
 
 from visionguard.config import ConfigError, load_config, resolve_project_path
+from visionguard.data import DatasetError, discover_normal_images, split_normal_images
 from visionguard.evaluation import EvaluationError
 from visionguard.model import (
     ArtifactError,
@@ -24,7 +25,10 @@ from visionguard.model import (
 )
 from visionguard.processing import (
     ImageValidationError,
+    calibrate_reference_threshold,
+    fit_per_pixel_reference,
     load_image,
+    run_reference_baseline,
     run_rule_based_baseline,
     to_rgb,
 )
@@ -49,6 +53,47 @@ def _heatmap_rgb(display_map: np.ndarray) -> np.ndarray:
         np.rint(values * 255).astype(np.uint8), cv2.COLORMAP_TURBO
     )
     return cv2.cvtColor(heatmap_bgr, cv2.COLOR_BGR2RGB)
+
+
+def _iter_loaded_images(image_paths):
+    for image_path in image_paths:
+        yield load_image(image_path)
+
+
+def _normal_image_fingerprint(dataset_root: Path, category: str) -> tuple[tuple[str, int, int], ...]:
+    """Track normal training file metadata so Streamlit invalidates the fit on changes."""
+    return tuple(
+        (str(path.resolve()), path.stat().st_size, path.stat().st_mtime_ns)
+        for path in discover_normal_images(dataset_root, category)
+    )
+
+
+@st.cache_resource(show_spinner=False)
+def _load_reference_model(
+    dataset_root: str,
+    category: str,
+    calibration_fraction: float,
+    calibration_seed: int,
+    calibration_percentile: float,
+    standard_deviation_floor: float,
+    normal_fingerprint: tuple[tuple[str, int, int], ...],
+):
+    """Fit on the bank subset and calibrate only on disjoint normal holdout images."""
+    del normal_fingerprint  # Its value is part of the cache key.
+    split = split_normal_images(
+        dataset_root,
+        category,
+        calibration_fraction=calibration_fraction,
+        seed=calibration_seed,
+    )
+    model = fit_per_pixel_reference(_iter_loaded_images(split.memory_bank_images))
+    threshold = calibrate_reference_threshold(
+        model,
+        _iter_loaded_images(split.calibration_images),
+        percentile=calibration_percentile,
+        standard_deviation_floor=standard_deviation_floor,
+    )
+    return model, threshold, len(split.memory_bank_images), len(split.calibration_images)
 
 
 def _render_metric_group(label: str, metrics: dict[str, object]) -> None:
@@ -298,6 +343,173 @@ def _render_classical_baseline(
         )
 
 
+def _render_reference_baseline(
+    config: dict[str, object], uploaded, image_bytes: bytes | None
+) -> None:
+    st.header("Calibrated per-pixel reference baseline")
+    st.write(
+        "This baseline compares each pixel with statistics learned from normal "
+        "training images. Its pixel threshold is selected using a separate normal "
+        "calibration subset."
+    )
+    st.caption(
+        "The seeded split uses only `train/good` images. Test images and defect masks "
+        "are not used to fit or calibrate this detector."
+    )
+    digest = hashlib.sha256(image_bytes).hexdigest() if image_bytes else None
+    dataset_root = resolve_project_path(config["dataset"]["root"])
+    category = str(config["dataset"]["category"])
+    calibration_fraction = float(config["dataset"]["calibration_fraction"])
+    calibration_seed = int(config["dataset"]["calibration_seed"])
+    calibration_percentile = float(config["thresholds"]["pixel_percentile"])
+    standard_deviation_floor = 1.0
+    minimum_region_area = float(config["classical"]["min_region_area"])
+    signature = (
+        digest,
+        str(dataset_root),
+        category,
+        calibration_fraction,
+        calibration_seed,
+        calibration_percentile,
+        standard_deviation_floor,
+        minimum_region_area,
+    )
+    if st.session_state.get("reference_signature") != signature:
+        st.session_state.pop("reference_result", None)
+        st.session_state.pop("reference_image", None)
+        st.session_state["reference_signature"] = signature
+
+    if uploaded is None:
+        st.info("Upload an image above to run the calibrated reference baseline.")
+        return
+    try:
+        image = load_image(image_bytes)
+    except ImageValidationError as exc:
+        st.error(f"Unable to read this image: {exc}")
+        return
+
+    normal_root = dataset_root / category / "train" / "good"
+    if not normal_root.is_dir():
+        st.info(
+            f"Normal training images were not found at `{normal_root}`. Set up the "
+            "local MVTec category before preparing this baseline."
+        )
+
+    run_clicked = st.button(
+        "Prepare reference and score image",
+        key="run_reference_baseline",
+        disabled=not normal_root.is_dir(),
+    )
+    if run_clicked:
+        started = time.perf_counter()
+        try:
+            fingerprint = _normal_image_fingerprint(dataset_root, category)
+            with st.spinner(
+                "Fitting normal-pixel statistics and calibrating on held-out normal images..."
+            ):
+                model, pixel_threshold, training_count, calibration_count = (
+                    _load_reference_model(
+                        str(dataset_root),
+                        category,
+                        calibration_fraction,
+                        calibration_seed,
+                        calibration_percentile,
+                        standard_deviation_floor,
+                        fingerprint,
+                    )
+                )
+                if image.shape[:2] != model.mean.shape[:2]:
+                    expected_height, expected_width = model.mean.shape[:2]
+                    actual_height, actual_width = image.shape[:2]
+                    raise ImageValidationError(
+                        "Uploaded image size does not match the reference images "
+                        f"(expected {expected_width}×{expected_height}, received "
+                        f"{actual_width}×{actual_height})."
+                    )
+                result = run_reference_baseline(
+                    image,
+                    model,
+                    pixel_threshold=pixel_threshold,
+                    standard_deviation_floor=standard_deviation_floor,
+                    min_region_area=minimum_region_area,
+                )
+            st.session_state["reference_result"] = (
+                result,
+                pixel_threshold,
+                training_count,
+                calibration_count,
+            )
+            st.session_state["reference_image"] = image
+            st.session_state["reference_elapsed_ms"] = (
+                time.perf_counter() - started
+            ) * 1000.0
+        except (
+            DatasetError,
+            ImageValidationError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            st.error(f"Reference baseline failed: {exc}")
+
+    stored = st.session_state.get("reference_result")
+    result_image = st.session_state.get("reference_image")
+    if stored is None or result_image is None or digest is None:
+        st.image(image, caption=uploaded.name, use_container_width=True)
+        return
+
+    result, pixel_threshold, training_count, calibration_count = stored
+    maximum_score = float(np.max(result.score_map))
+    normalized_map = (
+        result.score_map / maximum_score
+        if maximum_score > 0
+        else np.zeros_like(result.score_map, dtype=np.float32)
+    )
+    heatmap = _heatmap_rgb(normalized_map)
+    overlay = cv2.addWeighted(to_rgb(result_image), 0.58, heatmap, 0.42, 0)
+
+    st.caption(
+        f"Reference fit: {training_count} normal training images · "
+        f"calibration: {calibration_count} disjoint normal images at "
+        f"the {calibration_percentile:g}th percentile"
+    )
+    score_column, threshold_column, count_column, timing_column = st.columns(4)
+    score_column.metric("Maximum pixel deviation", f"{result.image_score:.3f}")
+    threshold_column.metric("Calibrated pixel threshold", f"{pixel_threshold:.3f}")
+    count_column.metric("Candidate regions", len(result.regions))
+    timing_column.metric(
+        "Setup and scoring", f"{st.session_state.get('reference_elapsed_ms', 0.0):.1f} ms"
+    )
+
+    input_column, heatmap_column, overlay_column = st.columns(3)
+    input_column.image(result_image, caption="Input", use_container_width=True)
+    heatmap_column.image(heatmap, caption="Per-pixel deviation map", use_container_width=True)
+    overlay_column.image(overlay, caption="Deviation overlay", use_container_width=True)
+    st.caption(
+        "The calibrated cutoff applies to pixels; this reference baseline does not "
+        "provide an image-level anomaly decision."
+    )
+    if result.regions:
+        region_rows = [
+            {
+                "Region": index,
+                "Bounding box (x, y, width, height)": region.bounding_box,
+                "Contour area": round(region.contour_area, 2),
+                "Centroid (x, y)": tuple(round(value, 2) for value in region.centroid),
+            }
+            for index, region in enumerate(result.regions, start=1)
+        ]
+        st.dataframe(region_rows, hide_index=True, use_container_width=True)
+    else:
+        st.caption("No regions met the configured minimum area.")
+    with st.expander("View calibrated candidate mask"):
+        st.image(
+            result.mask,
+            caption="Pixels above threshold, grouped into retained candidate regions",
+            use_container_width=True,
+        )
+
+
 def _render_report(config: dict[str, object]) -> None:
     st.header("Evaluation report")
     st.write(
@@ -418,18 +630,25 @@ def main() -> None:
     uploaded = st.file_uploader(
         "Image for inspection",
         type=["png", "jpg", "jpeg", "bmp", "tif", "tiff"],
-        help="Upload once, then use either detector tab. Images are processed locally.",
+        help="Upload once, then use any inspection tab. Images are processed locally.",
         key="inspection_image_upload",
     )
     image_bytes = uploaded.getvalue() if uploaded is not None else None
 
-    inspection_tab, classical_tab, report_tab = st.tabs(
-        ["Inspect image", "Classical baseline", "Evaluation report"]
+    inspection_tab, classical_tab, reference_tab, report_tab = st.tabs(
+        [
+            "Inspect image",
+            "Classical baseline",
+            "Reference baseline",
+            "Evaluation report",
+        ]
     )
     with inspection_tab:
         _render_inspection(config, artifact_path_text, device, uploaded, image_bytes)
     with classical_tab:
         _render_classical_baseline(config, uploaded, image_bytes)
+    with reference_tab:
+        _render_reference_baseline(config, uploaded, image_bytes)
     with report_tab:
         _render_report(config)
 
