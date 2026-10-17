@@ -6,6 +6,7 @@ import csv
 import hashlib
 import json
 from pathlib import Path
+import time
 
 import cv2
 import numpy as np
@@ -21,7 +22,12 @@ from visionguard.model import (
     ResNet18PatchFeatureExtractor,
     load_patch_artifact,
 )
-from visionguard.processing import ImageValidationError, load_image, to_rgb
+from visionguard.processing import (
+    ImageValidationError,
+    load_image,
+    run_rule_based_baseline,
+    to_rgb,
+)
 
 
 @st.cache_resource(show_spinner=False)
@@ -65,19 +71,18 @@ def _render_metric_group(label: str, metrics: dict[str, object]) -> None:
     st.caption(" · ".join(f"{name}: {value}" for name, value in counts.items()))
 
 
-def _render_inspection(config: dict[str, object], artifact_path_text: str, device: str) -> None:
+def _render_inspection(
+    config: dict[str, object],
+    artifact_path_text: str,
+    device: str,
+    uploaded,
+    image_bytes: bytes | None,
+) -> None:
     st.header("Inspect an image")
     st.write(
         "Upload one image to view its anomaly score, calibrated decision, heatmap, "
         "and candidate regions. The score is not a defect probability."
     )
-    uploaded = st.file_uploader(
-        "Inspection image",
-        type=["png", "jpg", "jpeg", "bmp", "tif", "tiff"],
-        help="Images are processed locally by the configured detector.",
-    )
-
-    image_bytes = uploaded.getvalue() if uploaded is not None else None
     upload_digest = hashlib.sha256(image_bytes).hexdigest() if image_bytes else None
     artifact_path = (
         resolve_project_path(artifact_path_text) if artifact_path_text.strip() else None
@@ -192,6 +197,103 @@ def _render_inspection(config: dict[str, object], artifact_path_text: str, devic
         st.image(
             result.mask,
             caption="Regions retained after minimum area filtering",
+            use_container_width=True,
+        )
+
+
+def _render_classical_baseline(
+    config: dict[str, object], uploaded, image_bytes: bytes | None
+) -> None:
+    st.header("Rule-based local-contrast baseline")
+    st.write(
+        "This transparent baseline enhances grayscale local contrast, compares each "
+        "pixel with a blurred background, then uses Otsu thresholding and morphology "
+        "to find candidate regions."
+    )
+    st.caption(
+        "Its Otsu cutoff is chosen separately for each image. The resulting score is "
+        "not calibrated and is not a defect probability."
+    )
+    digest = hashlib.sha256(image_bytes).hexdigest() if image_bytes else None
+    if st.session_state.get("classical_upload_digest") != digest:
+        st.session_state.pop("classical_result", None)
+        st.session_state.pop("classical_image", None)
+        st.session_state["classical_upload_digest"] = digest
+
+    if uploaded is None:
+        st.info("Upload an image to run the rule-based baseline.")
+        return
+
+    try:
+        image = load_image(image_bytes)
+    except ImageValidationError as exc:
+        st.error(f"Unable to read this image: {exc}")
+        return
+
+    classical_settings = config["classical"]
+    run_clicked = st.button("Run rule-based baseline", key="run_classical_baseline")
+    if run_clicked:
+        started = time.perf_counter()
+        try:
+            result = run_rule_based_baseline(
+                image,
+                blur_kernel_size=int(classical_settings["blur_kernel_size"]),
+                local_blur_kernel_size=int(classical_settings["local_blur_kernel_size"]),
+                min_region_area=float(classical_settings["min_region_area"]),
+            )
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            st.session_state["classical_result"] = result
+            st.session_state["classical_image"] = image
+            st.session_state["classical_elapsed_ms"] = elapsed_ms
+        except (ImageValidationError, ValueError, RuntimeError) as exc:
+            st.error(f"Baseline failed: {exc}")
+
+    result = st.session_state.get("classical_result")
+    result_image = st.session_state.get("classical_image")
+    if result is None or result_image is None or digest is None:
+        st.image(image, caption=uploaded.name, use_container_width=True)
+        return
+
+    score_maximum = float(np.max(result.score_map))
+    normalized_map = (
+        result.score_map / score_maximum
+        if score_maximum > 0
+        else np.zeros_like(result.score_map, dtype=np.float32)
+    )
+    heatmap = _heatmap_rgb(normalized_map)
+    overlay = cv2.addWeighted(to_rgb(result_image), 0.58, heatmap, 0.42, 0)
+
+    st.divider()
+    score_column, threshold_column, count_column, timing_column = st.columns(4)
+    score_column.metric("Maximum local-contrast score", f"{result.image_score:.1f}")
+    threshold_column.metric("Per-image Otsu threshold", f"{result.threshold:.1f}")
+    count_column.metric("Candidate regions", len(result.regions))
+    timing_column.metric(
+        "Processing time", f"{st.session_state.get('classical_elapsed_ms', 0.0):.1f} ms"
+    )
+
+    input_column, heatmap_column, overlay_column = st.columns(3)
+    input_column.image(result_image, caption="Input", use_container_width=True)
+    heatmap_column.image(heatmap, caption="Local-contrast score map", use_container_width=True)
+    overlay_column.image(overlay, caption="Score-map overlay", use_container_width=True)
+
+    if result.regions:
+        region_rows = [
+            {
+                "Region": index,
+                "Bounding box (x, y, width, height)": region.bounding_box,
+                "Contour area": round(region.contour_area, 2),
+                "Centroid (x, y)": tuple(round(value, 2) for value in region.centroid),
+            }
+            for index, region in enumerate(result.regions, start=1)
+        ]
+        st.dataframe(region_rows, hide_index=True, use_container_width=True)
+    else:
+        st.caption("No regions met the configured minimum area.")
+    with st.expander("View candidate mask"):
+        st.image(
+            result.mask,
+            caption="Candidate regions after opening and closing",
             use_container_width=True,
         )
 
@@ -313,9 +415,21 @@ def main() -> None:
             "a manufacturing decision."
         )
 
-    inspection_tab, report_tab = st.tabs(["Inspect image", "Evaluation report"])
+    uploaded = st.file_uploader(
+        "Image for inspection",
+        type=["png", "jpg", "jpeg", "bmp", "tif", "tiff"],
+        help="Upload once, then use either detector tab. Images are processed locally.",
+        key="inspection_image_upload",
+    )
+    image_bytes = uploaded.getvalue() if uploaded is not None else None
+
+    inspection_tab, classical_tab, report_tab = st.tabs(
+        ["Inspect image", "Classical baseline", "Evaluation report"]
+    )
     with inspection_tab:
-        _render_inspection(config, artifact_path_text, device)
+        _render_inspection(config, artifact_path_text, device, uploaded, image_bytes)
+    with classical_tab:
+        _render_classical_baseline(config, uploaded, image_bytes)
     with report_tab:
         _render_report(config)
 
