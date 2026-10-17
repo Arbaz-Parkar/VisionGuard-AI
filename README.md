@@ -65,9 +65,19 @@ After installing the package, validate the local category:
 .\.venv\Scripts\python.exe scripts\check_dataset.py --root data\mvtec_ad --category bottle
 ```
 
-## Evaluate a saved patch detector
+## Build a patch detector artifact
 
-Once a `.npz` artifact has been created, evaluate it on that category's official `test` split:
+Build a detector from the configured category's normal training images:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_memory_bank.py
+```
+
+The command makes a seeded, disjoint split of `train/good`, builds the sampled patch memory bank from the training portion, and calibrates image and pixel thresholds on the normal holdout. It uses the configured ResNet input size, sampling strategy, seed, and image/pixel percentiles. The resulting `.npz` artifact is saved under `models/`; it contains the memory bank and detector metadata, but not the pretrained ResNet weights. The first run may need to retrieve the pinned TorchVision weights. Use `--dataset-root`, `--category`, or `--output` to override the configured paths.
+
+## Evaluate the saved patch detector
+
+Evaluate the artifact on that category's official `test` split:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\evaluate_detector.py
