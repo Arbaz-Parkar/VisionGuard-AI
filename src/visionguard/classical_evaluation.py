@@ -24,6 +24,7 @@ from visionguard.evaluation import (
     BinaryMetricSummary,
     EvaluationError,
     _binary_metrics,
+    _pixel_metric_arrays,
     _relative_image_path,
 )
 from visionguard.processing import (
@@ -68,12 +69,20 @@ class ClassicalEvaluationImageResult:
     rule_based_otsu_threshold: float
     rule_based_predicted_anomaly_pixel_count: int
     rule_based_inference_ms: float
+    rule_based_preprocessing_ms: float
+    rule_based_model_inference_ms: float
+    rule_based_total_ms: float
+    image_height: int
+    image_width: int
     reference_image_score: float
     reference_image_threshold: float
     reference_predicted_anomaly: bool
     reference_pixel_threshold: float
     reference_predicted_anomaly_pixel_count: int
     reference_inference_ms: float
+    reference_preprocessing_ms: float
+    reference_model_inference_ms: float
+    reference_total_ms: float
 
 
 @dataclass(frozen=True)
@@ -92,9 +101,12 @@ class ClassicalEvaluationReport:
     reference_pixel_threshold_percentile: float | None
     missing_mask_count: int
     pixel_metric_image_count: int
+    pixel_metric_size: tuple[int, int]
+    warmup_image_count: int
     ground_truth_anomaly_pixel_count: int
     rule_based: ClassicalBaselineMetrics
     reference: ClassicalBaselineMetrics
+    per_defect_pixel_metrics: dict[str, dict[str, BinaryMetricSummary]]
     per_image: tuple[ClassicalEvaluationImageResult, ...]
 
 
@@ -162,7 +174,10 @@ def _evaluate_method(
     image_threshold: float,
     scorer: Callable[[np.ndarray], ClassicalDetectionResult],
     rows: dict[str, dict[str, object]],
-) -> tuple[BinaryMetricSummary, BinaryMetricSummary, int, int]:
+    *,
+    pixel_metric_size: tuple[int, int],
+    warmup_count: int,
+) -> tuple[BinaryMetricSummary, BinaryMetricSummary, int, int, dict[str, BinaryMetricSummary]]:
     image_labels: list[int] = []
     image_scores: list[float] = []
     pixel_labels: list[np.ndarray] = []
@@ -170,13 +185,27 @@ def _evaluate_method(
     pixel_predictions: list[np.ndarray] = []
     metric_image_count = 0
     ground_truth_pixel_count = 0
+    per_defect_pixels: dict[str, list[tuple[np.ndarray, np.ndarray, np.ndarray]]] = {}
+
+    warmup_samples = samples[: min(warmup_count, len(samples))]
+    for sample in warmup_samples:
+        try:
+            scorer(load_image(sample.image_path))
+        except (ImageValidationError, ValueError, RuntimeError) as exc:
+            raise EvaluationError(
+                f"Unable to warm up {method_name} baseline with {sample.image_path}: {exc}"
+            ) from exc
 
     for sample in samples:
         try:
+            total_start = time.perf_counter()
+            preprocessing_start = total_start
             image = load_image(sample.image_path)
+            preprocessing_ms = (time.perf_counter() - preprocessing_start) * 1000.0
             started = time.perf_counter()
             result = scorer(image)
-            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            inference_ms = (time.perf_counter() - started) * 1000.0
+            total_ms = (time.perf_counter() - total_start) * 1000.0
         except (ImageValidationError, ValueError, RuntimeError) as exc:
             raise EvaluationError(
                 f"Unable to score {method_name} test image {sample.image_path}: {exc}"
@@ -204,6 +233,8 @@ def _evaluate_method(
                 "defect_type": sample.defect_type,
                 "actual_anomaly": sample.is_anomaly,
                 "mask_status": mask_status,
+                "image_height": int(result.score_map.shape[0]),
+                "image_width": int(result.score_map.shape[1]),
                 "pixel_count": int(result.score_map.size),
                 "ground_truth_anomaly_pixel_count": (
                     int(np.count_nonzero(truth_mask)) if truth_mask is not None else None
@@ -215,16 +246,25 @@ def _evaluate_method(
         row[f"{prefix}_image_threshold"] = float(image_threshold)
         row[f"{prefix}_predicted_anomaly"] = image_predicted
         row[f"{prefix}_predicted_anomaly_pixel_count"] = predicted_pixels
-        row[f"{prefix}_inference_ms"] = float(elapsed_ms)
+        row[f"{prefix}_inference_ms"] = float(inference_ms)
+        row[f"{prefix}_preprocessing_ms"] = float(preprocessing_ms)
+        row[f"{prefix}_model_inference_ms"] = float(inference_ms)
+        row[f"{prefix}_total_ms"] = float(total_ms)
         if prefix == "rule_based":
             row["rule_based_otsu_threshold"] = float(result.threshold)
         else:
             row["reference_pixel_threshold"] = float(result.threshold)
 
         if truth_mask is not None:
-            pixel_labels.append(truth_mask.reshape(-1).astype(np.uint8, copy=False))
-            pixel_scores.append(result.score_map.reshape(-1))
-            pixel_predictions.append(result.mask.reshape(-1) > 0)
+            metric_truth, metric_scores, metric_predictions = _pixel_metric_arrays(
+                truth_mask, result.score_map, result.mask > 0, pixel_metric_size
+            )
+            pixel_labels.append(metric_truth)
+            pixel_scores.append(metric_scores)
+            pixel_predictions.append(metric_predictions)
+            per_defect_pixels.setdefault(sample.defect_type, []).append(
+                (metric_truth, metric_scores, metric_predictions)
+            )
             metric_image_count += 1
             if prefix == "rule_based":
                 ground_truth_pixel_count += int(np.count_nonzero(truth_mask))
@@ -254,7 +294,24 @@ def _evaluate_method(
         threshold=0.0,
         predictions=prediction_values,
     )
-    return image_metrics, pixel_metrics, metric_image_count, ground_truth_pixel_count
+    defect_types = sorted({sample.defect_type for sample in samples if sample.is_anomaly})
+    per_defect_metric: dict[str, BinaryMetricSummary] = {}
+    for defect_type in defect_types:
+        grouped = per_defect_pixels.get("good", []) + per_defect_pixels.get(defect_type, [])
+        if grouped:
+            per_defect_metric[defect_type] = _binary_metrics(
+                np.concatenate([item[0] for item in grouped]),
+                np.concatenate([item[1] for item in grouped]),
+                threshold=0.0,
+                predictions=np.concatenate([item[2] for item in grouped]),
+            )
+        else:
+            per_defect_metric[defect_type] = _binary_metrics(
+                np.empty(0, dtype=np.uint8),
+                np.empty(0, dtype=np.float32),
+                threshold=0.0,
+            )
+    return image_metrics, pixel_metrics, metric_image_count, ground_truth_pixel_count, per_defect_metric
 
 
 def _atomic_text_write(path: Path, content: str) -> None:
@@ -325,6 +382,9 @@ def evaluate_classical_baselines(
     local_blur_kernel_size: int = 31,
     min_region_area: float = 20.0,
     output_dir: str | Path | None = None,
+    pixel_metric_size: tuple[int, int] = (256, 256),
+    warmup_count: int = 3,
+    sample_limit: int | None = None,
 ) -> ClassicalEvaluationReport:
     """Evaluate both classical baselines without using test data for calibration.
 
@@ -341,6 +401,12 @@ def evaluate_classical_baselines(
             seed=calibration_seed,
         )
         samples = discover_evaluation_images(root, category)
+        if sample_limit is not None:
+            if isinstance(sample_limit, bool) or not isinstance(sample_limit, int) or sample_limit <= 0:
+                raise EvaluationError("sample_limit must be a positive integer when provided.")
+            samples = samples[:sample_limit]
+        if isinstance(warmup_count, bool) or not isinstance(warmup_count, int) or warmup_count < 0:
+            raise EvaluationError("warmup_count must be a non-negative integer.")
         if not samples:
             raise EvaluationError(
                 f"No supported test images were found for category '{category}' under {root}."
@@ -383,7 +449,7 @@ def evaluate_classical_baselines(
         )
 
         rows: dict[str, dict[str, object]] = {}
-        rule_image_metrics, rule_pixel_metrics, pixel_image_count, gt_pixel_count = (
+        rule_image_metrics, rule_pixel_metrics, pixel_image_count, gt_pixel_count, rule_defect_pixels = (
             _evaluate_method(
                 samples,
                 root,
@@ -396,9 +462,11 @@ def evaluate_classical_baselines(
                     min_region_area=min_region_area,
                 ),
                 rows,
+                pixel_metric_size=pixel_metric_size,
+                warmup_count=warmup_count,
             )
         )
-        reference_image_metrics, reference_pixel_metrics, ref_pixel_image_count, _ = (
+        reference_image_metrics, reference_pixel_metrics, ref_pixel_image_count, _, reference_defect_pixels = (
             _evaluate_method(
                 samples,
                 root,
@@ -412,6 +480,8 @@ def evaluate_classical_baselines(
                     min_region_area=min_region_area,
                 ),
                 rows,
+                pixel_metric_size=pixel_metric_size,
+                warmup_count=warmup_count,
             )
         )
         if ref_pixel_image_count != pixel_image_count:
@@ -447,6 +517,8 @@ def evaluate_classical_baselines(
                 sample.is_anomaly and not sample.mask_available for sample in samples
             ),
             pixel_metric_image_count=pixel_image_count,
+            pixel_metric_size=pixel_metric_size,
+            warmup_image_count=min(warmup_count, len(samples)),
             ground_truth_anomaly_pixel_count=gt_pixel_count,
             rule_based=ClassicalBaselineMetrics(
                 image_threshold=rule_image_threshold,
@@ -468,6 +540,29 @@ def evaluate_classical_baselines(
                 image_metrics=reference_image_metrics,
                 pixel_metrics=reference_pixel_metrics,
             ),
+            per_defect_pixel_metrics={
+                defect_type: {
+                    "rule_based": rule_defect_pixels.get(
+                        defect_type,
+                        _binary_metrics(
+                            np.empty(0, dtype=np.uint8),
+                            np.empty(0, dtype=np.float32),
+                            0.0,
+                        ),
+                    ),
+                    "reference": reference_defect_pixels.get(
+                        defect_type,
+                        _binary_metrics(
+                            np.empty(0, dtype=np.uint8),
+                            np.empty(0, dtype=np.float32),
+                            0.0,
+                        ),
+                    ),
+                }
+                for defect_type in sorted(
+                    {sample.defect_type for sample in samples if sample.is_anomaly}
+                )
+            },
             per_image=tuple(
                 ClassicalEvaluationImageResult(**rows[_relative_image_path(sample.image_path, root)])
                 for sample in samples

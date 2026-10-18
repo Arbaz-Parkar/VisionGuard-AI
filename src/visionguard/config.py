@@ -35,6 +35,7 @@ def validate_config(config: Any) -> dict[str, Any]:
         "model",
         "thresholds",
         "classical",
+        "evaluation",
         "paths",
         "logging",
     ):
@@ -171,6 +172,36 @@ def validate_config(config: Any) -> dict[str, Any]:
         or min_region_area < 0
     ):
         raise ConfigError("classical.min_region_area must be non-negative.")
+
+    evaluation = config["evaluation"]
+    pixel_metric_size = evaluation.get("pixel_metric_size")
+    if (
+        not isinstance(pixel_metric_size, list)
+        or len(pixel_metric_size) != 2
+        or any(type(value) is not int or value <= 0 for value in pixel_metric_size)
+    ):
+        raise ConfigError("evaluation.pixel_metric_size must contain two positive integers.")
+    warmup_images = evaluation.get("warmup_images")
+    if type(warmup_images) is not int or warmup_images < 0:
+        raise ConfigError("evaluation.warmup_images must be a non-negative integer.")
+    for key in ("smoke_test_image_count", "sweep_candidate_pool_size", "failure_examples_per_method"):
+        value = evaluation.get(key)
+        if type(value) is not int or value <= 0:
+            raise ConfigError(f"evaluation.{key} must be a positive integer.")
+    sweep_ratios = evaluation.get("sweep_ratios")
+    if (
+        not isinstance(sweep_ratios, list)
+        or not sweep_ratios
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not 0 < value <= 1
+            for value in sweep_ratios
+        )
+        or len(set(sweep_ratios)) != len(sweep_ratios)
+    ):
+        raise ConfigError("evaluation.sweep_ratios must be unique values in (0, 1].")
 
     for key in ("artifacts", "outputs"):
         value = config["paths"].get(key)

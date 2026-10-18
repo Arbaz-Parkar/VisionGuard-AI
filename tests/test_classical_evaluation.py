@@ -57,6 +57,7 @@ def test_classical_evaluation_uses_disjoint_normal_calibration_and_saves_reports
         local_blur_kernel_size=7,
         min_region_area=0,
         output_dir=output_dir,
+        pixel_metric_size=(24, 24),
     )
 
     assert report.normal_training_image_count == 3
@@ -106,6 +107,7 @@ def test_classical_evaluation_rejects_test_mask_shape_mismatch(tmp_path: Path):
             blur_kernel_size=1,
             local_blur_kernel_size=7,
             min_region_area=0,
+            pixel_metric_size=(24, 24),
         )
 
 
@@ -121,6 +123,7 @@ def test_classical_evaluation_requires_a_test_split(tmp_path: Path):
             calibration_fraction=0.5,
             blur_kernel_size=1,
             local_blur_kernel_size=7,
+            pixel_metric_size=(24, 24),
         )
 
 

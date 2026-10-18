@@ -33,6 +33,13 @@ classical:
   blur_kernel_size: 3
   local_blur_kernel_size: 31
   min_region_area: 20
+evaluation:
+  pixel_metric_size: [256, 256]
+  warmup_images: 3
+  smoke_test_image_count: 5
+  sweep_ratios: [0.01, 0.05, 0.10, 0.25, 1.0]
+  sweep_candidate_pool_size: 2048
+  failure_examples_per_method: 5
 paths:
   artifacts: models
   outputs: outputs

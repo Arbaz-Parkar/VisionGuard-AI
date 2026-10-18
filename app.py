@@ -100,12 +100,13 @@ def _load_reference_model(
 
 def _render_metric_group(label: str, metrics: dict[str, object]) -> None:
     st.subheader(label)
-    columns = st.columns(4)
+    columns = st.columns(5)
     auroc = metrics.get("auroc")
     columns[0].metric("AUROC", "Unavailable" if auroc is None else f"{float(auroc):.4f}")
     columns[1].metric("Precision", f"{float(metrics.get('precision', 0.0)):.4f}")
     columns[2].metric("Recall", f"{float(metrics.get('recall', 0.0)):.4f}")
     columns[3].metric("F1", f"{float(metrics.get('f1', 0.0)):.4f}")
+    columns[4].metric("IoU", f"{float(metrics.get('iou', 0.0)):.4f}")
     if auroc is None and metrics.get("auroc_unavailable_reason"):
         st.caption(str(metrics["auroc_unavailable_reason"]))
     counts = {
@@ -553,6 +554,8 @@ def _render_report(config: dict[str, object]) -> None:
         return
 
     st.subheader(f"Category: {summary.get('category', 'unknown')}")
+    if summary.get("smoke_test"):
+        st.warning("Smoke test output only. These metrics are not a research result.")
     count_columns = st.columns(4)
     count_columns[0].metric("Evaluated images", summary.get("evaluated_image_count", 0))
     count_columns[1].metric("Normal images", summary.get("normal_image_count", 0))
@@ -624,8 +627,10 @@ def _render_report(config: dict[str, object]) -> None:
                 f"Image threshold: {method.get('image_threshold', 'unknown')} "
                 f"({method.get('image_threshold_method', 'unknown')}) · "
                 f"Pixel threshold: {pixel_threshold_text} · "
-                f"Mean / median inference: {method.get('mean_inference_ms', 'unknown')} / "
-                f"{method.get('median_inference_ms', 'unknown')} ms · "
+                f"Mean preprocessing / inference / total: "
+                f"{method.get('mean_preprocessing_ms', 'unknown')} / "
+                f"{method.get('mean_model_inference_ms', 'unknown')} / "
+                f"{method.get('mean_total_ms', 'unknown')} ms · "
                 f"Device: {summary.get('devices', {}).get(method_name, 'unknown')}"
             )
         defect_metrics = summary.get("per_defect_image_metrics")
@@ -644,11 +649,41 @@ def _render_report(config: dict[str, object]) -> None:
                                 "Precision": metrics.get("precision"),
                                 "Recall": metrics.get("recall"),
                                 "F1": metrics.get("f1"),
+                                "IoU": metrics.get("iou"),
                                 "Samples": metrics.get("sample_count"),
                             }
                         )
             st.subheader("Per-defect image metrics")
             st.dataframe(defect_rows, hide_index=True, use_container_width=True)
+        defect_pixel_metrics = summary.get("per_defect_pixel_metrics")
+        if isinstance(defect_pixel_metrics, dict) and defect_pixel_metrics:
+            pixel_rows = []
+            for defect_type, methods in defect_pixel_metrics.items():
+                if not isinstance(methods, dict):
+                    continue
+                for method_name, metrics in methods.items():
+                    if isinstance(metrics, dict):
+                        pixel_rows.append(
+                            {
+                                "Defect type": defect_type,
+                                "Method": method_name,
+                                "Pixel AUROC": metrics.get("auroc"),
+                                "Precision": metrics.get("precision"),
+                                "Recall": metrics.get("recall"),
+                                "F1": metrics.get("f1"),
+                                "IoU": metrics.get("iou"),
+                                "Pixels": metrics.get("sample_count"),
+                            }
+                        )
+            st.subheader("Per-defect pixel metrics")
+            st.dataframe(pixel_rows, hide_index=True, use_container_width=True)
+        st.caption(
+            f"Pixel metrics use a common {summary.get('pixel_metric_size', 'unknown')} grid; "
+            f"detector input size is {summary.get('model_input_size', 'unknown')}; "
+            f"{summary.get('warmup_image_count', 0)} warm-up images were excluded from timings."
+        )
+        if summary.get("image_metrics_note"):
+            st.caption(str(summary["image_metrics_note"]))
         if summary.get("latency_note"):
             st.caption(str(summary["latency_note"]))
         if summary.get("pixel_metrics_note"):

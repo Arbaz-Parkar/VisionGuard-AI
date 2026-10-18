@@ -9,7 +9,9 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 
+import cv2
 import numpy as np
 from sklearn.metrics import roc_auc_score
 
@@ -32,6 +34,7 @@ class BinaryMetricSummary:
     precision: float
     recall: float
     f1: float
+    iou: float
     true_negative: int
     false_positive: int
     false_negative: int
@@ -50,7 +53,12 @@ class EvaluationImageResult:
     image_threshold: float
     predicted_anomaly: bool
     image_inference_ms: float
+    preprocessing_ms: float
+    model_inference_ms: float
+    total_ms: float
     mask_status: str
+    image_height: int
+    image_width: int
     pixel_count: int
     ground_truth_anomaly_pixel_count: int | None
     predicted_anomaly_pixel_count: int
@@ -66,6 +74,9 @@ class EvaluationReport:
     anomalous_image_count: int
     missing_mask_count: int
     pixel_metric_image_count: int
+    pixel_metric_size: tuple[int, int]
+    warmup_image_count: int
+    device: str
     ground_truth_anomaly_pixel_count: int
     pixel_threshold: float
     image_threshold: float
@@ -73,6 +84,8 @@ class EvaluationReport:
     image_false_positive_rate_target: float
     image_metrics: BinaryMetricSummary
     pixel_metrics: BinaryMetricSummary
+    per_defect_image_metrics: dict[str, BinaryMetricSummary]
+    per_defect_pixel_metrics: dict[str, BinaryMetricSummary]
     per_image: tuple[EvaluationImageResult, ...]
 
 
@@ -96,6 +109,7 @@ def _binary_metrics(
             precision=0.0,
             recall=0.0,
             f1=0.0,
+            iou=0.0,
             true_negative=0,
             false_positive=0,
             false_negative=0,
@@ -132,6 +146,11 @@ def _binary_metrics(
         if precision + recall
         else 0.0
     )
+    intersection_over_union = (
+        true_positive / (true_positive + false_positive + false_negative)
+        if true_positive + false_positive + false_negative
+        else 0.0
+    )
 
     classes = np.unique(truth)
     if classes.size < 2:
@@ -146,6 +165,7 @@ def _binary_metrics(
         precision=float(precision),
         recall=float(recall),
         f1=float(f1),
+        iou=float(intersection_over_union),
         true_negative=true_negative,
         false_positive=false_positive,
         false_negative=false_negative,
@@ -161,12 +181,54 @@ def _relative_image_path(image_path: Path, dataset_root: Path) -> str:
         raise EvaluationError(f"Test image is outside the dataset root: {image_path}") from exc
 
 
+def _pixel_metric_arrays(
+    truth_mask: np.ndarray,
+    score_map: np.ndarray,
+    predicted_mask: np.ndarray,
+    target_size: tuple[int, int],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Resize pixel labels, scores, and final masks to a common metric grid."""
+    if (
+        not isinstance(target_size, tuple)
+        or len(target_size) != 2
+        or any(type(value) is not int or value <= 0 for value in target_size)
+    ):
+        raise EvaluationError("pixel_metric_size must contain two positive integers.")
+    height, width = target_size
+    if truth_mask.shape != score_map.shape or predicted_mask.shape != score_map.shape:
+        raise EvaluationError("Pixel masks and score maps must have matching shapes.")
+    if score_map.shape != target_size:
+        scores = cv2.resize(
+            np.asarray(score_map, dtype=np.float32),
+            (width, height),
+            interpolation=cv2.INTER_LINEAR,
+        )
+        truth = cv2.resize(
+            np.asarray(truth_mask, dtype=np.uint8),
+            (width, height),
+            interpolation=cv2.INTER_NEAREST,
+        )
+        predictions = cv2.resize(
+            np.asarray(predicted_mask, dtype=np.uint8),
+            (width, height),
+            interpolation=cv2.INTER_NEAREST,
+        )
+    else:
+        scores = np.asarray(score_map, dtype=np.float32)
+        truth = np.asarray(truth_mask, dtype=np.uint8)
+        predictions = np.asarray(predicted_mask, dtype=np.uint8)
+    return truth.reshape(-1), scores.reshape(-1), predictions.reshape(-1).astype(bool)
+
+
 def evaluate_patch_detector(
     dataset_root: str | Path,
     artifact: PatchDetectorArtifact,
     feature_extractor: PatchFeatureExtractor,
     *,
     output_dir: str | Path | None = None,
+    pixel_metric_size: tuple[int, int] = (256, 256),
+    warmup_count: int = 3,
+    sample_limit: int | None = None,
 ) -> EvaluationReport:
     """Evaluate an artifact on category test images, never on calibration data.
 
@@ -182,6 +244,16 @@ def evaluate_patch_detector(
         scorer = artifact.build_scorer(feature_extractor)
     except (DatasetError, ValueError) as exc:
         raise EvaluationError(str(exc)) from exc
+    if sample_limit is not None:
+        if isinstance(sample_limit, bool) or not isinstance(sample_limit, int) or sample_limit <= 0:
+            raise EvaluationError("sample_limit must be a positive integer when provided.")
+        samples = samples[:sample_limit]
+    if (
+        isinstance(warmup_count, bool)
+        or not isinstance(warmup_count, int)
+        or warmup_count < 0
+    ):
+        raise EvaluationError("warmup_count must be a non-negative integer.")
     if not samples:
         raise EvaluationError(
             f"No supported test images were found for category '{artifact.category}' under {root}."
@@ -197,10 +269,25 @@ def evaluate_patch_detector(
     pixel_metric_image_count = 0
     ground_truth_anomaly_pixel_count = 0
 
+    warmup_images = samples[: min(warmup_count, len(samples))]
+    for sample in warmup_images:
+        try:
+            scorer.run(load_image(sample.image_path), pixel_threshold=artifact.thresholds.pixel_threshold)
+        except (ImageValidationError, ValueError, RuntimeError) as exc:
+            raise EvaluationError(
+                f"Unable to warm up patch detector with {sample.image_path}: {exc}"
+            ) from exc
+
+    per_defect_pixel_arrays: dict[str, list[tuple[np.ndarray, np.ndarray, np.ndarray]]] = {}
+
     for sample in samples:
         try:
+            total_start = time.perf_counter()
+            preprocessing_start = total_start
             image = load_image(sample.image_path)
+            input_loaded_ms = (time.perf_counter() - preprocessing_start) * 1000.0
             result = scorer.run(image, pixel_threshold=artifact.thresholds.pixel_threshold)
+            elapsed_total_ms = (time.perf_counter() - total_start) * 1000.0
         except (ImageValidationError, ValueError, RuntimeError) as exc:
             raise EvaluationError(f"Unable to score test image {sample.image_path}: {exc}") from exc
 
@@ -237,9 +324,15 @@ def evaluate_patch_detector(
             mask_status = "available"
 
         if truth_mask is not None:
-            pixel_labels.append(truth_mask.reshape(-1).astype(np.uint8, copy=False))
-            pixel_scores.append(result.raw_map.reshape(-1))
-            pixel_predictions.append(result.mask.reshape(-1) > 0)
+            metric_truth, metric_scores, metric_predictions = _pixel_metric_arrays(
+                truth_mask, result.raw_map, result.mask > 0, pixel_metric_size
+            )
+            pixel_labels.append(metric_truth)
+            pixel_scores.append(metric_scores)
+            pixel_predictions.append(metric_predictions)
+            per_defect_pixel_arrays.setdefault(sample.defect_type, []).append(
+                (metric_truth, metric_scores, metric_predictions)
+            )
             pixel_metric_image_count += 1
             ground_truth_pixels = int(np.count_nonzero(truth_mask))
             ground_truth_anomaly_pixel_count += ground_truth_pixels
@@ -257,7 +350,15 @@ def evaluate_patch_detector(
                 image_threshold=artifact.thresholds.image_threshold,
                 predicted_anomaly=bool(predicted_anomaly),
                 image_inference_ms=float(result.timings.total_ms),
+                preprocessing_ms=float(input_loaded_ms + result.timings.preprocessing_ms),
+                model_inference_ms=float(
+                    result.timings.feature_extraction_ms
+                    + result.timings.nearest_neighbor_ms
+                ),
+                total_ms=float(elapsed_total_ms),
                 mask_status=mask_status,
+                image_height=int(result.raw_map.shape[0]),
+                image_width=int(result.raw_map.shape[1]),
                 pixel_count=int(result.raw_map.size),
                 ground_truth_anomaly_pixel_count=ground_truth_pixels,
                 predicted_anomaly_pixel_count=predicted_pixels,
@@ -293,6 +394,31 @@ def evaluate_patch_detector(
         artifact.thresholds.pixel_threshold,
         predictions=pixel_prediction_values,
     )
+    per_defect_image_metrics: dict[str, BinaryMetricSummary] = {}
+    defect_types = sorted({row.defect_type for row in rows if row.actual_anomaly})
+    for defect_type in defect_types:
+        subset = [row for row in rows if not row.actual_anomaly or row.defect_type == defect_type]
+        per_defect_image_metrics[defect_type] = _binary_metrics(
+            np.asarray([row.actual_anomaly for row in subset], dtype=np.uint8),
+            np.asarray([row.image_score for row in subset], dtype=np.float64),
+            artifact.thresholds.image_threshold,
+        )
+    per_defect_pixel_metrics: dict[str, BinaryMetricSummary] = {}
+    for defect_type in defect_types:
+        grouped = per_defect_pixel_arrays.get("good", []) + per_defect_pixel_arrays.get(defect_type, [])
+        if grouped:
+            per_defect_pixel_metrics[defect_type] = _binary_metrics(
+                np.concatenate([item[0] for item in grouped]),
+                np.concatenate([item[1] for item in grouped]),
+                artifact.thresholds.pixel_threshold,
+                predictions=np.concatenate([item[2] for item in grouped]),
+            )
+        else:
+            per_defect_pixel_metrics[defect_type] = _binary_metrics(
+                np.empty(0, dtype=np.uint8),
+                np.empty(0, dtype=np.float32),
+                artifact.thresholds.pixel_threshold,
+            )
     report = EvaluationReport(
         category=artifact.category,
         evaluated_image_count=len(samples),
@@ -300,6 +426,9 @@ def evaluate_patch_detector(
         anomalous_image_count=sum(sample.is_anomaly for sample in samples),
         missing_mask_count=missing_mask_count,
         pixel_metric_image_count=pixel_metric_image_count,
+        pixel_metric_size=pixel_metric_size,
+        warmup_image_count=len(warmup_images),
+        device=str(getattr(feature_extractor, "device", "unknown")),
         ground_truth_anomaly_pixel_count=ground_truth_anomaly_pixel_count,
         pixel_threshold=artifact.thresholds.pixel_threshold,
         image_threshold=artifact.thresholds.image_threshold,
@@ -307,6 +436,8 @@ def evaluate_patch_detector(
         image_false_positive_rate_target=artifact.thresholds.image_false_positive_rate,
         image_metrics=image_metrics,
         pixel_metrics=pixel_metrics,
+        per_defect_image_metrics=per_defect_image_metrics,
+        per_defect_pixel_metrics=per_defect_pixel_metrics,
         per_image=tuple(rows),
     )
     if output_dir is not None:

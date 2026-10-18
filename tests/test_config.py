@@ -12,6 +12,7 @@ def test_default_configuration_loads() -> None:
     assert config["model"]["architecture"] == "resnet18"
     assert config["dataset"]["calibration_fraction"] == 0.15
     assert config["thresholds"]["image_rule"] == "mean_plus_3std"
+    assert config["evaluation"]["pixel_metric_size"] == [256, 256]
 
 
 def test_invalid_mask_threshold_is_rejected(tmp_path: Path) -> None:
@@ -31,6 +32,7 @@ def test_invalid_mask_threshold_is_rejected(tmp_path: Path) -> None:
         ("model", "sampling_ratio", 0.0, "sampling_ratio"),
         ("thresholds", "pixel_rule", "test_labels", "pixel_rule"),
         ("classical", "local_blur_kernel_size", 4, "local_blur_kernel_size"),
+        ("evaluation", "sweep_ratios", [0.1, 0.1], "sweep_ratios"),
     ],
 )
 def test_invalid_experiment_settings_are_rejected(

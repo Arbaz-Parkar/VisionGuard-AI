@@ -105,7 +105,23 @@ After building the patch detector artifact, run the unified evaluation command:
 .\.venv\Scripts\python.exe scripts\evaluate.py
 ```
 
-It evaluates the patch detector and both classical baselines on the same official test images, checks that image and mask coverage agrees, and writes aligned metrics and per-image results to `outputs/metrics/<category>/`. The JSON report includes overall image/pixel metrics, per-defect image metrics, calibrated thresholds, and observed mean/median inference times. Timing is diagnostic only: this run does not use a separate warm-up protocol. Pixel metrics currently use each image's native resolution. The comparison requires an artifact built with the current normal training/calibration split sizes; rebuild it with `scripts/build_memory_bank.py` if those settings change. Test labels and masks are still used only for final metrics.
+It evaluates the patch detector and both classical baselines on the same official test images and writes aligned metrics and per-image results to `outputs/metrics/<category>/`. The comparison checks that image and mask coverage agrees and requires an artifact built from the current normal split sizes; rebuild it with `scripts/build_memory_bank.py` when the split settings change. Test labels and masks are used only for final evaluation.
+
+Pixel metrics use a common 256 by 256 grid. Score maps use bilinear resizing; ground-truth and predicted masks use nearest-neighbor resizing. Reports include image and pixel AUROC, precision, recall, F1, and IoU, including per-defect metrics. Three warm-up images are excluded from latency summaries. Each method reports preprocessing, inference, and total time with its device and input size. For the learned detector, inference covers feature extraction and nearest-neighbor scoring; for the classical methods, it covers the full baseline pipeline.
+
+Image AUROC is the headline ranking metric. Accuracy is omitted because class imbalance can make it misleading.
+
+The command also runs the random and greedy memory-bank sweep at 1%, 5%, 10%, 25%, and 100%. To keep greedy coreset selection tractable, it creates a seeded candidate pool of up to 2,048 patches from the full normal-only patch pool. The 100% point is the full candidate pool used for this experiment. Metadata records both pool and source candidate counts; sweep test AUROC does not change the configured detector default. Sweep metrics are saved as `memory_bank_sweep.json` and `.csv` under `outputs/metrics/<category>/`.
+
+The evaluator saves ROC, confusion-matrix, score-distribution, and memory-bank-sweep plots under `outputs/plots/<category>/research/`. Ranked false-positive and false-negative figures go under `outputs/examples/<category>/research/`. `failure_analysis.md` lists the cases for human inspection; add plausible visual causes after reviewing the genuine figures. `experiment_metadata.json` records the config, category, split counts, seeds, device, warm-up settings, and library versions.
+
+Run a five-image wiring check with:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\evaluate.py --smoke
+```
+
+Smoke outputs are separated under `smoke_test` folders and labeled as non-research results. Adjust the run with `--warmup-images`, `--pixel-metric-size`, `--sweep-ratios`, `--sweep-pool-size`, or `--failure-examples` as needed.
 
 ## Run the local dashboard
 
@@ -136,4 +152,4 @@ Upload one image above the tabs, then use it in an inspection tab. **Inspect ima
 
 ## Limitations
 
-The configured mask threshold is an initial setting, not a calibrated decision boundary. Thresholds must be selected using a separate validation procedure, never the final test masks. This is an academic demonstration, not a certified industrial inspection system. An anomaly score is not automatically a calibrated defect probability. A qualified human inspector must verify suspected defects before manufacturing decisions.
+The image and pixel cutoffs are calibrated on held-out normal training images and may not generalize to new production conditions. Test masks are reserved for final evaluation. This is an academic demonstration, not a certified industrial inspection system. An anomaly score is not automatically a calibrated defect probability. A qualified human inspector must verify suspected defects before manufacturing decisions.

@@ -160,28 +160,16 @@ def _load_preprocessed(path: Path, input_size: tuple[int, int], preserve_aspect_
     return torch.from_numpy(array)
 
 
-def build_memory_bank(
+def extract_patch_embeddings(
     split: CalibrationSplit,
     feature_extractor: PatchFeatureExtractor,
     *,
     input_size: tuple[int, int] = (256, 256),
     preserve_aspect_ratio: bool = True,
     batch_size: int = 8,
-    sampling_strategy: SamplingStrategy = "random",
-    sampling_ratio: float = 0.1,
-    max_patches: int = 10_000,
-    seed: int = 42,
-) -> MemoryBank:
-    """Extract and reduce patches using only ``split.memory_bank_images``.
-
-    The calibration side of ``CalibrationSplit`` is checked for overlap but is
-    never loaded or sent through the extractor. All bank source paths must be
-    under ``train/good``; test and defect images are rejected.
-    """
+) -> torch.Tensor:
+    """Extract the complete normal-only candidate pool on CPU for analysis runs."""
     bank_paths = _validate_training_split(split)
-    strategy, ratio, maximum, seed_value = _validate_sampling(
-        sampling_strategy, sampling_ratio, max_patches, seed
-    )
     if (
         not isinstance(input_size, tuple)
         or len(input_size) != 2
@@ -221,8 +209,49 @@ def build_memory_bank(
                 -1, patch_features.shape[-1]
             )
         )
+    return torch.cat(feature_batches, dim=0).contiguous()
 
-    all_patches = torch.cat(feature_batches, dim=0).contiguous()
+
+def build_memory_bank(
+    split: CalibrationSplit,
+    feature_extractor: PatchFeatureExtractor,
+    *,
+    input_size: tuple[int, int] = (256, 256),
+    preserve_aspect_ratio: bool = True,
+    batch_size: int = 8,
+    sampling_strategy: SamplingStrategy = "random",
+    sampling_ratio: float = 0.1,
+    max_patches: int = 10_000,
+    seed: int = 42,
+) -> MemoryBank:
+    """Extract and reduce patches using only ``split.memory_bank_images``.
+
+    The calibration side of ``CalibrationSplit`` is checked for overlap but is
+    never loaded or sent through the extractor. All bank source paths must be
+    under ``train/good``; test and defect images are rejected.
+    """
+    bank_paths = _validate_training_split(split)
+    strategy, ratio, maximum, seed_value = _validate_sampling(
+        sampling_strategy, sampling_ratio, max_patches, seed
+    )
+    if (
+        not isinstance(input_size, tuple)
+        or len(input_size) != 2
+        or any(type(value) is not int or value <= 0 for value in input_size)
+    ):
+        raise DatasetError("input_size must contain two positive (height, width) integers.")
+    if not isinstance(preserve_aspect_ratio, bool):
+        raise DatasetError("preserve_aspect_ratio must be a boolean.")
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
+        raise DatasetError("batch_size must be a positive integer.")
+
+    all_patches = extract_patch_embeddings(
+        split,
+        feature_extractor,
+        input_size=input_size,
+        preserve_aspect_ratio=preserve_aspect_ratio,
+        batch_size=batch_size,
+    )
     sampled = sample_patch_embeddings(
         all_patches,
         sampling_strategy=strategy,

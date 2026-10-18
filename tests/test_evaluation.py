@@ -7,7 +7,12 @@ from PIL import Image
 import pytest
 import torch
 
-from visionguard.evaluation import EvaluationError, evaluate_patch_detector
+from visionguard.evaluation import (
+    EvaluationError,
+    _binary_metrics,
+    _pixel_metric_arrays,
+    evaluate_patch_detector,
+)
 from visionguard.model import (
     MemoryBank,
     PatchAnomalyScorer,
@@ -96,6 +101,7 @@ def test_evaluation_reports_image_and_pixel_metrics_and_missing_masks(tmp_path: 
         _artifact(),
         PixelFeatureExtractor(),
         output_dir=output_dir,
+        pixel_metric_size=(8, 8),
     )
 
     assert report.evaluated_image_count == 4
@@ -132,7 +138,12 @@ def test_evaluation_reports_undefined_auc_when_labels_have_one_class(tmp_path: P
         np.zeros((8, 8, 3), dtype=np.uint8),
     )
 
-    report = evaluate_patch_detector(dataset_root, _artifact(), PixelFeatureExtractor())
+    report = evaluate_patch_detector(
+        dataset_root,
+        _artifact(),
+        PixelFeatureExtractor(),
+        pixel_metric_size=(8, 8),
+    )
 
     assert report.image_metrics.auroc is None
     assert "both normal and anomalous" in report.image_metrics.auroc_unavailable_reason
@@ -155,5 +166,39 @@ def test_evaluation_rejects_missing_test_images_and_wrong_mask_shapes(tmp_path: 
 
     with pytest.raises(EvaluationError, match="does not match image/map shape"):
         evaluate_patch_detector(
-            tmp_path / "dataset", _artifact(), PixelFeatureExtractor()
+            tmp_path / "dataset",
+            _artifact(),
+            PixelFeatureExtractor(),
+            pixel_metric_size=(8, 8),
         )
+
+
+def test_pixel_metric_arrays_use_bilinear_scores_and_nearest_neighbor_masks():
+    truth = np.zeros((2, 2), dtype=bool)
+    truth[0, 0] = True
+    scores = np.asarray([[1.0, 0.0], [0.0, 0.0]], dtype=np.float32)
+    predictions = truth.copy()
+
+    resized_truth, resized_scores, resized_predictions = _pixel_metric_arrays(
+        truth, scores, predictions, (4, 4)
+    )
+
+    assert resized_truth.shape == (16,)
+    assert resized_scores.shape == (16,)
+    assert resized_predictions.shape == (16,)
+    assert np.count_nonzero(resized_truth) == 4
+    assert np.array_equal(resized_truth, resized_predictions.astype(np.uint8))
+
+
+def test_binary_metrics_calculates_iou_from_the_final_prediction_mask():
+    summary = _binary_metrics(
+        np.asarray([1, 1, 0], dtype=np.uint8),
+        np.asarray([0.9, 0.8, 0.7], dtype=np.float32),
+        threshold=0.5,
+        predictions=np.asarray([True, False, True]),
+    )
+
+    assert summary.true_positive == 1
+    assert summary.false_positive == 1
+    assert summary.false_negative == 1
+    assert summary.iou == pytest.approx(1.0 / 3.0)
