@@ -191,6 +191,7 @@ def evaluate_patch_detector(
     image_scores: list[float] = []
     pixel_labels: list[np.ndarray] = []
     pixel_scores: list[np.ndarray] = []
+    pixel_predictions: list[np.ndarray] = []
     rows: list[EvaluationImageResult] = []
     missing_mask_count = 0
     pixel_metric_image_count = 0
@@ -205,6 +206,8 @@ def evaluate_patch_detector(
 
         if result.raw_map.shape != image.shape[:2] or not np.isfinite(result.raw_map).all():
             raise EvaluationError(f"Scorer returned an invalid map for {sample.image_path}.")
+        if result.mask.shape != result.raw_map.shape:
+            raise EvaluationError(f"Scorer returned an invalid mask for {sample.image_path}.")
         predicted_anomaly = result.image_score > artifact.thresholds.image_threshold
         image_labels.append(int(sample.is_anomaly))
         image_scores.append(result.image_score)
@@ -234,18 +237,16 @@ def evaluate_patch_detector(
             mask_status = "available"
 
         if truth_mask is not None:
-            predicted_mask = result.raw_map > artifact.thresholds.pixel_threshold
             pixel_labels.append(truth_mask.reshape(-1).astype(np.uint8, copy=False))
             pixel_scores.append(result.raw_map.reshape(-1))
+            pixel_predictions.append(result.mask.reshape(-1) > 0)
             pixel_metric_image_count += 1
             ground_truth_pixels = int(np.count_nonzero(truth_mask))
             ground_truth_anomaly_pixel_count += ground_truth_pixels
-            predicted_pixels: int | None = int(np.count_nonzero(predicted_mask))
+            predicted_pixels: int | None = int(np.count_nonzero(result.mask))
         else:
             ground_truth_pixels = None
-            predicted_pixels = int(
-                np.count_nonzero(result.raw_map > artifact.thresholds.pixel_threshold)
-            )
+            predicted_pixels = int(np.count_nonzero(result.mask))
 
         rows.append(
             EvaluationImageResult(
@@ -278,12 +279,19 @@ def evaluate_patch_detector(
         if pixel_scores
         else np.empty(0, dtype=np.float32)
     )
+    pixel_prediction_values = (
+        np.concatenate(pixel_predictions)
+        if pixel_predictions
+        else np.empty(0, dtype=bool)
+    )
     pixel_labels.clear()
     pixel_scores.clear()
+    pixel_predictions.clear()
     pixel_metrics = _binary_metrics(
         pixel_truth,
         pixel_score_values,
         artifact.thresholds.pixel_threshold,
+        predictions=pixel_prediction_values,
     )
     report = EvaluationReport(
         category=artifact.category,

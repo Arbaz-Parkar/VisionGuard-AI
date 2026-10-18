@@ -1,0 +1,373 @@
+"""Combine the three detector evaluations into a directly comparable report."""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+import csv
+from io import StringIO
+import json
+import os
+from pathlib import Path
+import tempfile
+
+import numpy as np
+
+from visionguard.classical_evaluation import (
+    ClassicalEvaluationReport,
+    ClassicalEvaluationImageResult,
+)
+from visionguard.evaluation import (
+    BinaryMetricSummary,
+    EvaluationError,
+    EvaluationImageResult,
+    EvaluationReport,
+    _binary_metrics,
+)
+from visionguard.model import PatchDetectorArtifact
+
+
+@dataclass(frozen=True)
+class ComparisonMethodSummary:
+    """Metrics, fixed thresholds, and observed inference times for one method."""
+
+    label: str
+    image_metrics: BinaryMetricSummary
+    pixel_metrics: BinaryMetricSummary
+    image_threshold: float
+    image_threshold_method: str
+    pixel_threshold: float | None
+    pixel_threshold_method: str
+    mean_inference_ms: float
+    median_inference_ms: float
+
+
+@dataclass(frozen=True)
+class ComparisonImageResult:
+    """Aligned per-image scores and final mask counts for all approaches."""
+
+    image_path: str
+    defect_type: str
+    actual_anomaly: bool
+    mask_status: str
+    pixel_count: int
+    ground_truth_anomaly_pixel_count: int | None
+    patch_image_score: float
+    patch_image_threshold: float
+    patch_predicted_anomaly: bool
+    patch_pixel_threshold: float
+    patch_predicted_anomaly_pixel_count: int
+    patch_inference_ms: float
+    rule_based_image_score: float
+    rule_based_image_threshold: float
+    rule_based_predicted_anomaly: bool
+    rule_based_otsu_threshold: float
+    rule_based_predicted_anomaly_pixel_count: int
+    rule_based_inference_ms: float
+    reference_image_score: float
+    reference_image_threshold: float
+    reference_predicted_anomaly: bool
+    reference_pixel_threshold: float
+    reference_predicted_anomaly_pixel_count: int
+    reference_inference_ms: float
+
+
+@dataclass(frozen=True)
+class ComparisonReport:
+    """Summary for three methods evaluated against the same test images."""
+
+    category: str
+    evaluated_image_count: int
+    normal_image_count: int
+    anomalous_image_count: int
+    missing_mask_count: int
+    pixel_metric_image_count: int
+    normal_training_image_count: int
+    calibration_image_count: int
+    devices: dict[str, str]
+    latency_note: str
+    pixel_metrics_note: str
+    methods: dict[str, ComparisonMethodSummary]
+    per_defect_image_metrics: dict[str, dict[str, BinaryMetricSummary]]
+    per_image: tuple[ComparisonImageResult, ...]
+
+
+def _method_values(
+    patch: EvaluationImageResult, classical: ClassicalEvaluationImageResult
+) -> dict[str, tuple[float, float, bool]]:
+    return {
+        "patch_detector": (
+            patch.image_score,
+            patch.image_threshold,
+            patch.predicted_anomaly,
+        ),
+        "rule_based": (
+            classical.rule_based_image_score,
+            classical.rule_based_image_threshold,
+            classical.rule_based_predicted_anomaly,
+        ),
+        "reference": (
+            classical.reference_image_score,
+            classical.reference_image_threshold,
+            classical.reference_predicted_anomaly,
+        ),
+    }
+
+
+def _latency_summary(values: list[float]) -> tuple[float, float]:
+    if not values or not np.isfinite(values).all():
+        raise EvaluationError("Inference timing values must be finite and non-empty.")
+    return float(np.mean(values)), float(np.median(values))
+
+
+def combine_evaluation_reports(
+    patch: EvaluationReport,
+    classical: ClassicalEvaluationReport,
+    artifact: PatchDetectorArtifact,
+    *,
+    patch_device: str = "unknown",
+) -> ComparisonReport:
+    """Validate test-set parity and assemble comparable method summaries."""
+    if not isinstance(patch, EvaluationReport):
+        raise EvaluationError("patch must be an EvaluationReport.")
+    if not isinstance(classical, ClassicalEvaluationReport):
+        raise EvaluationError("classical must be a ClassicalEvaluationReport.")
+    if not isinstance(artifact, PatchDetectorArtifact):
+        raise EvaluationError("artifact must be a PatchDetectorArtifact.")
+    if patch.category != classical.category or patch.category != artifact.category:
+        raise EvaluationError("Patch, classical, and artifact categories must match.")
+
+    patch_rows = {row.image_path: row for row in patch.per_image}
+    classical_rows = {row.image_path: row for row in classical.per_image}
+    if len(patch_rows) != len(patch.per_image) or len(classical_rows) != len(classical.per_image):
+        raise EvaluationError("Per-image reports contain duplicate image paths.")
+    if patch_rows.keys() != classical_rows.keys():
+        raise EvaluationError("Patch and classical reports do not contain identical test images.")
+
+    merged_rows: list[ComparisonImageResult] = []
+    for image_path in sorted(patch_rows):
+        patch_row = patch_rows[image_path]
+        classical_row = classical_rows[image_path]
+        shared_patch = (
+            patch_row.defect_type,
+            patch_row.actual_anomaly,
+            patch_row.mask_status,
+            patch_row.pixel_count,
+            patch_row.ground_truth_anomaly_pixel_count,
+        )
+        shared_classical = (
+            classical_row.defect_type,
+            classical_row.actual_anomaly,
+            classical_row.mask_status,
+            classical_row.pixel_count,
+            classical_row.ground_truth_anomaly_pixel_count,
+        )
+        if shared_patch != shared_classical:
+            raise EvaluationError(f"Ground-truth coverage differs for {image_path}.")
+
+        merged_rows.append(
+            ComparisonImageResult(
+                image_path=image_path,
+                defect_type=patch_row.defect_type,
+                actual_anomaly=patch_row.actual_anomaly,
+                mask_status=patch_row.mask_status,
+                pixel_count=patch_row.pixel_count,
+                ground_truth_anomaly_pixel_count=(
+                    patch_row.ground_truth_anomaly_pixel_count
+                ),
+                patch_image_score=patch_row.image_score,
+                patch_image_threshold=patch_row.image_threshold,
+                patch_predicted_anomaly=patch_row.predicted_anomaly,
+                patch_pixel_threshold=artifact.thresholds.pixel_threshold,
+                patch_predicted_anomaly_pixel_count=(
+                    patch_row.predicted_anomaly_pixel_count
+                ),
+                patch_inference_ms=patch_row.image_inference_ms,
+                rule_based_image_score=classical_row.rule_based_image_score,
+                rule_based_image_threshold=classical_row.rule_based_image_threshold,
+                rule_based_predicted_anomaly=classical_row.rule_based_predicted_anomaly,
+                rule_based_otsu_threshold=classical_row.rule_based_otsu_threshold,
+                rule_based_predicted_anomaly_pixel_count=(
+                    classical_row.rule_based_predicted_anomaly_pixel_count
+                ),
+                rule_based_inference_ms=classical_row.rule_based_inference_ms,
+                reference_image_score=classical_row.reference_image_score,
+                reference_image_threshold=classical_row.reference_image_threshold,
+                reference_predicted_anomaly=classical_row.reference_predicted_anomaly,
+                reference_pixel_threshold=classical_row.reference_pixel_threshold,
+                reference_predicted_anomaly_pixel_count=(
+                    classical_row.reference_predicted_anomaly_pixel_count
+                ),
+                reference_inference_ms=classical_row.reference_inference_ms,
+            )
+        )
+
+    if (
+        patch.evaluated_image_count != classical.evaluated_image_count
+        or patch.normal_image_count != classical.normal_image_count
+        or patch.anomalous_image_count != classical.anomalous_image_count
+        or patch.missing_mask_count != classical.missing_mask_count
+        or patch.pixel_metric_image_count != classical.pixel_metric_image_count
+        or patch.image_metrics.sample_count != classical.rule_based.image_metrics.sample_count
+        or patch.pixel_metrics.sample_count != classical.rule_based.pixel_metrics.sample_count
+        or patch.pixel_metrics.sample_count != classical.reference.pixel_metrics.sample_count
+    ):
+        raise EvaluationError("Patch and classical evaluation coverage does not match.")
+
+    method_series = {
+        "patch_detector": {
+            "label": "PatchCore-inspired detector",
+            "image_metrics": patch.image_metrics,
+            "pixel_metrics": patch.pixel_metrics,
+            "image_threshold": patch.image_threshold,
+            "image_threshold_method": (
+                f"{artifact.thresholds.image_percentile:g}th percentile of held-out "
+                "normal image scores."
+            ),
+            "pixel_threshold": patch.pixel_threshold,
+            "pixel_threshold_method": (
+                f"{artifact.thresholds.pixel_percentile:g}th percentile of held-out "
+                "normal pixel scores."
+            ),
+            "latency": [row.patch_inference_ms for row in merged_rows],
+        },
+        "rule_based": {
+            "label": "Rule-based classical baseline",
+            "image_metrics": classical.rule_based.image_metrics,
+            "pixel_metrics": classical.rule_based.pixel_metrics,
+            "image_threshold": classical.rule_based.image_threshold,
+            "image_threshold_method": classical.rule_based.image_threshold_method,
+            "pixel_threshold": None,
+            "pixel_threshold_method": classical.rule_based.pixel_threshold_method,
+            "latency": [row.rule_based_inference_ms for row in merged_rows],
+        },
+        "reference": {
+            "label": "Per-pixel reference baseline",
+            "image_metrics": classical.reference.image_metrics,
+            "pixel_metrics": classical.reference.pixel_metrics,
+            "image_threshold": classical.reference.image_threshold,
+            "image_threshold_method": classical.reference.image_threshold_method,
+            "pixel_threshold": classical.reference.pixel_threshold,
+            "pixel_threshold_method": classical.reference.pixel_threshold_method,
+            "latency": [row.reference_inference_ms for row in merged_rows],
+        },
+    }
+
+    methods: dict[str, ComparisonMethodSummary] = {}
+    for key, values in method_series.items():
+        mean_ms, median_ms = _latency_summary(values["latency"])
+        methods[key] = ComparisonMethodSummary(
+            label=values["label"],
+            image_metrics=values["image_metrics"],
+            pixel_metrics=values["pixel_metrics"],
+            image_threshold=values["image_threshold"],
+            image_threshold_method=values["image_threshold_method"],
+            pixel_threshold=values["pixel_threshold"],
+            pixel_threshold_method=values["pixel_threshold_method"],
+            mean_inference_ms=mean_ms,
+            median_inference_ms=median_ms,
+        )
+
+    good_rows = [row for row in merged_rows if not row.actual_anomaly]
+    defect_types = sorted({row.defect_type for row in merged_rows if row.actual_anomaly})
+    per_defect: dict[str, dict[str, BinaryMetricSummary]] = {}
+    for defect_type in defect_types:
+        subset = good_rows + [
+            row
+            for row in merged_rows
+            if row.actual_anomaly and row.defect_type == defect_type
+        ]
+        per_defect[defect_type] = {}
+        for method_name in method_series:
+            values = [
+                _method_values(
+                    patch_rows[row.image_path], classical_rows[row.image_path]
+                )[method_name]
+                for row in subset
+            ]
+            per_defect[defect_type][method_name] = _binary_metrics(
+                np.asarray([row.actual_anomaly for row in subset], dtype=np.uint8),
+                np.asarray([value[0] for value in values], dtype=np.float64),
+                methods[method_name].image_threshold,
+            )
+
+    return ComparisonReport(
+        category=patch.category,
+        evaluated_image_count=patch.evaluated_image_count,
+        normal_image_count=patch.normal_image_count,
+        anomalous_image_count=patch.anomalous_image_count,
+        missing_mask_count=patch.missing_mask_count,
+        pixel_metric_image_count=patch.pixel_metric_image_count,
+        normal_training_image_count=classical.normal_training_image_count,
+        calibration_image_count=classical.calibration_image_count,
+        devices={
+            "patch_detector": patch_device,
+            "rule_based": "cpu",
+            "reference": "cpu",
+        },
+        latency_note=(
+            "Observed scorer times from this evaluation pass. No separate warm-up was "
+            "performed, so treat these timings as diagnostic rather than benchmark results."
+        ),
+        pixel_metrics_note=(
+            "Pixel AUROC uses continuous maps at each test image's native resolution; "
+            "precision, recall, and F1 use each method's final mask. Normal test images "
+            "use empty masks; anomalous images without masks are excluded."
+        ),
+        methods=methods,
+        per_defect_image_metrics=per_defect,
+        per_image=tuple(merged_rows),
+    )
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temporary_path = Path(stream.name)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+    except OSError as exc:
+        raise EvaluationError(f"Unable to write comparison report {path}: {exc}") from exc
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            try:
+                temporary_path.unlink()
+            except OSError:
+                pass
+
+
+def save_comparison_report(
+    report: ComparisonReport, output_dir: str | Path
+) -> tuple[Path, Path]:
+    """Write the combined JSON summary and aligned per-image CSV atomically."""
+    if not isinstance(report, ComparisonReport):
+        raise EvaluationError("report must be a ComparisonReport.")
+    destination = Path(output_dir).expanduser()
+    try:
+        destination.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise EvaluationError(
+            f"Unable to create comparison output directory {destination}: {exc}"
+        ) from exc
+
+    json_path = destination / "metrics.json"
+    csv_path = destination / "per_image.csv"
+    json_text = json.dumps(asdict(report), indent=2, allow_nan=False) + "\n"
+    fieldnames = list(ComparisonImageResult.__dataclass_fields__)
+    buffer = StringIO(newline="")
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(asdict(row) for row in report.per_image)
+    _atomic_write(json_path, json_text)
+    _atomic_write(csv_path, buffer.getvalue())
+    return json_path, csv_path

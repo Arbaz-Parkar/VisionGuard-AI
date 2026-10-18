@@ -523,6 +523,7 @@ def _render_report(config: dict[str, object]) -> None:
     )
     default_report_dir = (
         resolve_project_path(config["paths"]["outputs"])
+        / "metrics"
         / str(config["dataset"]["category"])
     )
     report_dir_text = st.text_input(
@@ -536,8 +537,8 @@ def _render_report(config: dict[str, object]) -> None:
     if not summary_path.is_file():
         st.info(
             f"No evaluation report exists at `{summary_path}`. Run "
-            "`scripts/evaluate_detector.py` or `scripts/evaluate_classical.py` after "
-            "setting up the dataset."
+            "`scripts/evaluate.py` after building the detector artifact and setting "
+            "up the dataset."
         )
         return
 
@@ -597,6 +598,61 @@ def _render_report(config: dict[str, object]) -> None:
                 f"({method.get('image_threshold_method', 'unknown')}) · "
                 f"Pixel threshold: {pixel_threshold_text}"
             )
+    elif isinstance(summary.get("methods"), dict):
+        for method_name, method in summary["methods"].items():
+            if not isinstance(method, dict):
+                st.error(f"The {method_name} report entry is invalid.")
+                return
+            method_image_metrics = method.get("image_metrics")
+            method_pixel_metrics = method.get("pixel_metrics")
+            if not isinstance(method_image_metrics, dict) or not isinstance(
+                method_pixel_metrics, dict
+            ):
+                st.error(f"The {method_name} report is missing metrics.")
+                return
+            st.divider()
+            st.subheader(str(method.get("label", method_name)))
+            _render_metric_group("Image-level metrics", method_image_metrics)
+            _render_metric_group("Pixel-level metrics", method_pixel_metrics)
+            pixel_threshold = method.get("pixel_threshold")
+            pixel_threshold_text = (
+                f"{pixel_threshold} ({method.get('pixel_threshold_method', 'unknown')})"
+                if pixel_threshold is not None
+                else str(method.get("pixel_threshold_method", "unknown"))
+            )
+            st.caption(
+                f"Image threshold: {method.get('image_threshold', 'unknown')} "
+                f"({method.get('image_threshold_method', 'unknown')}) · "
+                f"Pixel threshold: {pixel_threshold_text} · "
+                f"Mean / median inference: {method.get('mean_inference_ms', 'unknown')} / "
+                f"{method.get('median_inference_ms', 'unknown')} ms · "
+                f"Device: {summary.get('devices', {}).get(method_name, 'unknown')}"
+            )
+        defect_metrics = summary.get("per_defect_image_metrics")
+        if isinstance(defect_metrics, dict) and defect_metrics:
+            defect_rows = []
+            for defect_type, methods in defect_metrics.items():
+                if not isinstance(methods, dict):
+                    continue
+                for method_name, metrics in methods.items():
+                    if isinstance(metrics, dict):
+                        defect_rows.append(
+                            {
+                                "Defect type": defect_type,
+                                "Method": method_name,
+                                "Image AUROC": metrics.get("auroc"),
+                                "Precision": metrics.get("precision"),
+                                "Recall": metrics.get("recall"),
+                                "F1": metrics.get("f1"),
+                                "Samples": metrics.get("sample_count"),
+                            }
+                        )
+            st.subheader("Per-defect image metrics")
+            st.dataframe(defect_rows, hide_index=True, use_container_width=True)
+        if summary.get("latency_note"):
+            st.caption(str(summary["latency_note"]))
+        if summary.get("pixel_metrics_note"):
+            st.caption(str(summary["pixel_metrics_note"]))
     else:
         st.error("The evaluation summary is missing image or pixel metrics.")
         return

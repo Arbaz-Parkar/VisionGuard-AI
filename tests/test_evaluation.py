@@ -107,7 +107,8 @@ def test_evaluation_reports_image_and_pixel_metrics_and_missing_masks(tmp_path: 
     assert report.image_metrics.auroc == pytest.approx(1.0)
     assert report.image_metrics.f1 == pytest.approx(1.0)
     assert report.pixel_metrics.auroc == pytest.approx(1.0)
-    assert report.pixel_metrics.f1 == pytest.approx(1.0)
+    # The four-pixel candidate is removed by the default 20-pixel region filter.
+    assert report.pixel_metrics.f1 == pytest.approx(0.0)
     assert report.pixel_metrics.sample_count == 3 * 8 * 8
     assert [row.mask_status for row in report.per_image].count("missing") == 1
     assert report.per_image[0].image_path.startswith("bottle/test/")

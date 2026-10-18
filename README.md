@@ -97,6 +97,16 @@ Run both classical methods on the official test split:
 
 The evaluator fits the per-pixel reference model on the seeded normal training subset, calibrates both image thresholds and the reference pixel threshold on the disjoint normal holdout, then evaluates the test images and masks. It uses the configured threshold rules (`percentile` or `mean_plus_3std`); the rule-based method keeps its per-image Otsu pixel mask. Pixel precision/recall/F1 use each method's final mask, while pixel AUROC uses its continuous score map. Reports are written to `outputs/classical/<category>/metrics.json` and `per_image.csv`. Use `--dataset-root`, `--category`, or `--output-dir` to override the configured paths.
 
+## Compare all three methods
+
+After building the patch detector artifact, run the unified evaluation command:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\evaluate.py
+```
+
+It evaluates the patch detector and both classical baselines on the same official test images, checks that image and mask coverage agrees, and writes aligned metrics and per-image results to `outputs/metrics/<category>/`. The JSON report includes overall image/pixel metrics, per-defect image metrics, calibrated thresholds, and observed mean/median inference times. Timing is diagnostic only: this run does not use a separate warm-up protocol. Pixel metrics currently use each image's native resolution. The comparison requires an artifact built with the current normal training/calibration split sizes; rebuild it with `scripts/build_memory_bank.py` if those settings change. Test labels and masks are still used only for final metrics.
+
 ## Run the local dashboard
 
 Launch the Streamlit interface from the project root:
@@ -105,7 +115,7 @@ Launch the Streamlit interface from the project root:
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-Upload one image above the tabs, then use it in an inspection tab. **Inspect image** displays the detector score, calibrated decision, heatmap overlay, and candidate-region details. **Classical baseline** runs local-contrast detection with per-image Otsu thresholding. **Reference baseline** fits pixel statistics on the seeded normal training split and calibrates its pixel threshold on the disjoint held-out normal split; it does not use test images or masks and requires the uploaded image to match the training-image dimensions. **Evaluation report** reads saved JSON and CSV reports; set its report directory to `outputs/classical/<category>` to view the classical comparison. Use a saved `.npz` detector artifact in the sidebar for AI inspection; the first inspection may load the pinned pretrained ResNet18 weights. Uploaded inspection images are separate from test-split evaluation and do not change its metrics.
+Upload one image above the tabs, then use it in an inspection tab. **Inspect image** displays the detector score, calibrated decision, heatmap overlay, and candidate-region details. **Classical baseline** runs local-contrast detection with per-image Otsu thresholding. **Reference baseline** fits pixel statistics on the seeded normal training split and calibrates its pixel threshold on the disjoint held-out normal split; it does not use test images or masks and requires the uploaded image to match the training-image dimensions. **Evaluation report** displays the combined report from `outputs/metrics/<category>` by default; enter another report directory to view detector-only or classical-only reports. Use a saved `.npz` detector artifact in the sidebar for AI inspection; the first inspection may load the pinned pretrained ResNet18 weights. Uploaded inspection images are separate from test-split evaluation and do not change its metrics.
 
 ## Development checks
 
