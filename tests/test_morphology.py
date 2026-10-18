@@ -52,6 +52,17 @@ def test_gradient_returns_boundary_pixels():
     assert set(np.unique(gradient)).issubset({0, 255})
 
 
+def test_top_hat_extracts_a_bright_detail_from_grayscale_image():
+    image = np.full((15, 15), 30, dtype=np.uint8)
+    image[7, 7] = 220
+
+    result = morphology(image, "tophat", kernel_size=3)
+
+    assert result.shape == image.shape
+    assert result[7, 7] == 190
+    assert np.count_nonzero(result) == 1
+
+
 @pytest.mark.parametrize(
     "mask, operation, kwargs",
     [

@@ -1,4 +1,4 @@
-"""Morphological operations for binary threshold and defect masks."""
+"""Morphological operations for binary masks and grayscale top-hat filtering."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ import numpy as np
 
 from .preprocessing import ImageValidationError, validate_image
 
-MorphologyOperation = Literal["erode", "dilate", "open", "close", "gradient"]
+MorphologyOperation = Literal["erode", "dilate", "open", "close", "gradient", "tophat"]
 KernelShape = Literal["rect", "ellipse", "cross"]
-_OPERATIONS = frozenset({"erode", "dilate", "open", "close", "gradient"})
+_OPERATIONS = frozenset({"erode", "dilate", "open", "close", "gradient", "tophat"})
 _KERNEL_SHAPES = {
     "rect": cv2.MORPH_RECT,
     "ellipse": cv2.MORPH_ELLIPSE,
@@ -27,20 +27,22 @@ def morphology(
     kernel_shape: KernelShape = "rect",
     iterations: int = 1,
 ) -> np.ndarray:
-    """Apply a morphological operation to a 2D uint8 binary mask.
+    """Apply morphology to a 2D uint8 binary mask or grayscale image.
 
     Masks must contain only 0 and 255 values. Opening removes small foreground
     specks, closing fills small holes, and gradient highlights mask boundaries.
+    Top-hat accepts grayscale intensities and extracts bright details smaller
+    than the structuring element.
     """
     pixels = validate_image(mask)
     if pixels.ndim != 2:
-        raise ImageValidationError("Morphology expects a 2D binary mask.")
-    if not np.isin(pixels, (0, 255)).all():
-        raise ImageValidationError("Binary masks must contain only 0 and 255 values.")
+        raise ImageValidationError("Morphology expects a 2D image or binary mask.")
     if operation not in _OPERATIONS:
         raise ImageValidationError(
-            "operation must be one of 'erode', 'dilate', 'open', 'close', or 'gradient'."
+            "operation must be one of 'erode', 'dilate', 'open', 'close', 'gradient', or 'tophat'."
         )
+    if operation != "tophat" and not np.isin(pixels, (0, 255)).all():
+        raise ImageValidationError("Binary masks must contain only 0 and 255 values.")
     if (
         isinstance(kernel_size, bool)
         or not isinstance(kernel_size, int)
@@ -60,6 +62,10 @@ def morphology(
         result = cv2.erode(pixels, kernel, iterations=iterations)
     elif operation == "dilate":
         result = cv2.dilate(pixels, kernel, iterations=iterations)
+    elif operation == "tophat":
+        result = cv2.morphologyEx(
+            pixels, cv2.MORPH_TOPHAT, kernel, iterations=iterations
+        )
     else:
         operation_code = {
             "open": cv2.MORPH_OPEN,

@@ -102,6 +102,28 @@ def sharpen_image(
     return result
 
 
+def laplacian_sharpen(
+    image: np.ndarray, *, amount: float = 0.5, aperture_size: int = 3
+) -> np.ndarray:
+    """Sharpen with ``image - amount * Laplacian(image)``; retain alpha if present."""
+    pixels = validate_image(image)
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not math.isfinite(amount) or not 0 <= amount <= 5:
+        raise ImageValidationError("amount must be a finite number from 0 through 5.")
+    if isinstance(aperture_size, bool) or not isinstance(aperture_size, int) or aperture_size not in (1, 3, 5, 7):
+        raise ImageValidationError("aperture_size must be one of 1, 3, 5, or 7.")
+    result = pixels.copy()
+    target = pixels[..., :3] if pixels.ndim == 3 and pixels.shape[2] == 4 else pixels
+    response = cv2.Laplacian(target, cv2.CV_32F, ksize=aperture_size)
+    sharpened = np.clip(
+        np.rint(target.astype(np.float32) - float(amount) * response), 0, 255
+    ).astype(np.uint8)
+    if result.ndim == 3 and result.shape[2] == 4:
+        result[..., :3] = sharpened
+    else:
+        result[...] = sharpened
+    return result
+
+
 def _clahe_parameters(
     clip_limit: float, tile_grid_size: tuple[int, int]
 ) -> tuple[float, tuple[int, int]]:

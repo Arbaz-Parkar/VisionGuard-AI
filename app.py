@@ -32,6 +32,7 @@ from visionguard.processing import (
     run_rule_based_baseline,
     to_rgb,
 )
+from visionguard.lab_ui import render_image_processing_lab
 
 
 @st.cache_resource(show_spinner=False)
@@ -755,28 +756,32 @@ def main() -> None:
         )
 
     uploaded = st.file_uploader(
-        "Image for inspection",
+        "Image for the Lab or inspection",
         type=["png", "jpg", "jpeg", "bmp", "tif", "tiff"],
-        help="Upload once, then use any inspection tab. Images are processed locally.",
+        help="Upload once, then use it in the Image Processing Lab or Inspect page. Images are processed locally.",
         key="inspection_image_upload",
     )
     image_bytes = uploaded.getvalue() if uploaded is not None else None
 
-    inspection_tab, classical_tab, reference_tab, report_tab = st.tabs(
-        [
-            "Inspect image",
-            "Classical baseline",
-            "Reference baseline",
-            "Evaluation report",
-        ]
+    lab_tab, inspection_tab, results_tab = st.tabs(
+        ["Image Processing Lab", "Inspect", "Results"]
     )
+    with lab_tab:
+        render_image_processing_lab(image_bytes, uploaded.name if uploaded is not None else None)
     with inspection_tab:
-        _render_inspection(config, artifact_path_text, device, uploaded, image_bytes)
-    with classical_tab:
-        _render_classical_baseline(config, uploaded, image_bytes)
-    with reference_tab:
-        _render_reference_baseline(config, uploaded, image_bytes)
-    with report_tab:
+        inspection_method = st.radio(
+            "Inspection method",
+            ["Patch detector", "Rule-based baseline", "Per-pixel reference baseline"],
+            horizontal=True,
+            key="inspection_method",
+        )
+        if inspection_method == "Patch detector":
+            _render_inspection(config, artifact_path_text, device, uploaded, image_bytes)
+        elif inspection_method == "Rule-based baseline":
+            _render_classical_baseline(config, uploaded, image_bytes)
+        else:
+            _render_reference_baseline(config, uploaded, image_bytes)
+    with results_tab:
         _render_report(config)
 
 

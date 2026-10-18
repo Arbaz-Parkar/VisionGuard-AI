@@ -13,6 +13,49 @@ ColorOrder = Literal["RGB", "BGR"]
 _SUPPORTED_APERTURES = frozenset({3, 5, 7})
 
 
+def _normalized_magnitude(values: np.ndarray) -> np.ndarray:
+    magnitude = np.abs(values.astype(np.float32))
+    maximum = float(magnitude.max(initial=0.0))
+    if maximum <= 0:
+        return np.zeros(magnitude.shape, dtype=np.uint8)
+    return np.clip(np.rint(magnitude * (255.0 / maximum)), 0, 255).astype(np.uint8)
+
+
+def sobel_edges(
+    image: np.ndarray, *, aperture_size: int = 3, color_order: ColorOrder = "RGB"
+) -> np.ndarray:
+    """Return a display-normalized Sobel gradient-magnitude image."""
+    if isinstance(aperture_size, bool) or not isinstance(aperture_size, int) or aperture_size not in _SUPPORTED_APERTURES:
+        raise ImageValidationError("aperture_size must be one of 3, 5, or 7.")
+    gray = to_grayscale(image, color_order=color_order)
+    dx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=aperture_size)
+    dy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=aperture_size)
+    return _normalized_magnitude(cv2.magnitude(dx, dy))
+
+
+def laplacian_edges(
+    image: np.ndarray, *, aperture_size: int = 3, color_order: ColorOrder = "RGB"
+) -> np.ndarray:
+    """Return a display-normalized absolute Laplacian response."""
+    if isinstance(aperture_size, bool) or not isinstance(aperture_size, int) or aperture_size not in _SUPPORTED_APERTURES:
+        raise ImageValidationError("aperture_size must be one of 3, 5, or 7.")
+    gray = to_grayscale(image, color_order=color_order)
+    response = cv2.Laplacian(gray, cv2.CV_32F, ksize=aperture_size)
+    return _normalized_magnitude(response)
+
+
+def laplacian_of_gaussian(
+    image: np.ndarray, *, sigma: float = 1.0, color_order: ColorOrder = "RGB"
+) -> np.ndarray:
+    """Smooth with a Gaussian, then return the normalized Laplacian response."""
+    if isinstance(sigma, bool) or not isinstance(sigma, (int, float)) or not np.isfinite(sigma) or sigma <= 0:
+        raise ImageValidationError("sigma must be a finite number greater than 0.")
+    gray = to_grayscale(image, color_order=color_order)
+    radius = max(1, int(np.ceil(3 * float(sigma))))
+    blurred = cv2.GaussianBlur(gray, (2 * radius + 1, 2 * radius + 1), sigmaX=float(sigma))
+    return _normalized_magnitude(cv2.Laplacian(blurred, cv2.CV_32F, ksize=3))
+
+
 def canny_edges(
     image: np.ndarray,
     *,
