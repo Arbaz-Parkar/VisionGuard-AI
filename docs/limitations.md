@@ -1,72 +1,27 @@
 # Limitations and interpretation
 
-## Scope of the result
+## Dataset coverage
 
-The real-data result currently covers only the MVTec AD `bottle` category and
-83 test images. It does not establish performance on the other MVTec
-categories, on different cameras, or on production images. The strong bottle
-image AUROC is a result for this dataset split and should not be described as
-a general industrial-inspection accuracy claim.
+The primary result is one MVTec AD category, screw, evaluated on 160 test images. The secondary bottle run contains 83 test images. These are controlled benchmark categories from the same dataset source, not evidence of performance across products, factories, cameras, or production conditions. The screw data uses a fixed camera with changing in-frame pose; it does not test multiple camera viewpoints.
 
-The local dataset came from the `foersben/mvtec-ad` Hugging Face mirror rather
-than MVTec's official download form. The mirror labels the data CC BY-NC-SA
-4.0, and MVTec's dataset page lists the same license. The run validated file
-counts and mask coverage, but did not verify the mirror against official
-checksums. Preserve the mirror attribution, original MVTec dataset citation,
-and license notices. Dataset images and derived failure figures may carry the
-dataset's usage conditions; check those terms before sharing them.
+The local copy came from the foersben/mvtec-ad Hugging Face mirror, not MVTec's official download form. The dataset is subject to CC BY-NC-SA 4.0. Preserve attribution and license notices, do not use the data commercially, and review the terms before redistributing images or derived examples. The project validated image/mask structure but did not verify the mirror against official checksums.
 
-## Detector and calibration
+## Detector and thresholds
 
-The patch detector uses frozen ImageNet-pretrained ResNet18 features. It does
-not learn the visual representation from this bottle dataset. Its normal
-reference is a random sample of 10,000 patch embeddings from 178 normal images.
-This is a deliberately compact PatchCore-inspired baseline, not the official
-PatchCore implementation or a reproduction of its reported benchmark.
+The patch detector uses frozen ImageNet-pretrained ResNet18 features and a random sample of up to 10,000 normal patch embeddings. It does not learn its representation from the screw or bottle training images. It is a compact PatchCore-inspired method, not the official PatchCore implementation.
 
-Image and pixel cutoffs are calibrated using 31 normal images. A 99.5th
-percentile cutoff is an empirical estimate from a small held-out image set;
-the many pixels within an image are spatially correlated and should not be
-treated as millions of independent calibration samples. The requested 0.5%
-false-positive target is not a guarantee on new images.
+Thresholds are calibrated from 48 normal screw images and 31 normal bottle images using the empirical 99.5th percentile. That small holdout does not guarantee a 0.5% false-positive rate on future data. Pixels within an image are spatially correlated and must not be treated as millions of independent calibration examples.
 
-For this test split, the patch detector reached pixel AUROC `0.983`, but its
-calibrated pixel mask had precision `0.335` and recall `0.995`. This shows why
-ranking quality (AUROC) and the behavior of a single threshold are different:
-the selected threshold found most defect pixels while also marking many
-normal pixels. The threshold should not be adjusted against this test set. Any
-new tuning should use a separate validation set, followed by one final test.
+For screw, image AUROC is 0.7510 but the calibrated image threshold detects only 19 of 119 anomalous test images. Pixel AUROC is 0.9825, while pixel precision is 0.1057 at the selected threshold. Ranking and thresholded operating performance differ substantially. Do not adjust thresholds on this test split and then describe the same split as an untouched final test.
 
-## Dataset and baseline assumptions
+## Baselines and evaluation protocol
 
-MVTec AD is a useful controlled benchmark, but the project tests one category
-at a time and does not cover changing illumination, camera drift, different
-product poses, unseen materials, or manufacturing-line variation. The
-per-pixel reference assumes the product remains spatially aligned and the
-normal appearance at each pixel is reasonably stable. The local-contrast
-baseline depends on hand-set blur, threshold, and morphology operations and
-may miss subtle or low-contrast defects.
+The per-pixel reference assumes consistent spatial alignment between the reference images and the image under inspection. The local-contrast baseline depends on hand-set blur, threshold, and morphology parameters. Neither method is expected to transfer automatically to new imaging conditions.
 
-Test masks are included in aggregate pixel metrics. Pixel metrics are
-calculated on a common 256 by 256 grid, so they are affected by resampling and
-by the large number of normal background pixels. The report includes AUROC,
-precision, recall, F1, and IoU; it should not be presented as an official MVTec
-benchmark score or compared directly with results that use a different
-protocol.
+Pixel metrics are computed on a common 256×256 grid, so interpolation affects results and the large normal background can dominate pixel counts. The evaluator's metrics are not official MVTec scores and should not be compared directly with results using a different protocol. The memory-bank sweep is descriptive; selecting a configuration based on its test performance would require a separate validation set and a new untouched test evaluation.
 
-The memory-bank sweep evaluates fixed bank designs on the test split for
-descriptive comparison. It does not modify the default artifact. If sweep
-results are used to choose a future configuration, that choice must be
-confirmed on separate validation data before reporting a final test result.
+## Use and runtime
 
-## Runtime and deployment
+The reported runs used CPU. Latency depends on the machine, software build, image size, and cache state. GPU results require separate measurement.
 
-The recorded comparison ran on CPU. Latency depends on the computer,
-Torch/TorchVision build, thread settings, image size, and cache state; it is
-not a hardware-independent speed claim. CUDA results would need to be measured
-and reported separately.
-
-This project is an academic demonstration, not a certified inspection system.
-It does not provide a calibrated probability that a product is defective, a
-production monitoring strategy, or a safety guarantee. Suspected defects
-require qualified human review before manufacturing decisions.
+The app provides anomaly scores and candidate regions, not calibrated defect probabilities, defect-type labels, a production monitoring plan, or a safety guarantee. A qualified human must review suspected defects before manufacturing decisions.

@@ -3,7 +3,7 @@ project:
   version: 0.1.0
 dataset:
   root: data/mvtec_ad
-  category: bottle
+  category: screw
   normal_class: good
   calibration_fraction: 0.15
   calibration_seed: 42

@@ -1,155 +1,84 @@
 # VisionGuard AI
 
-**Intelligent Visual Inspection & Anomaly Detection**
+**Local image-processing lab and visual anomaly-inspection prototype**
 
-VisionGuard AI is an MSc Digital Image Processing project exploring how classical image processing and deep feature-based anomaly detection can support industrial visual inspection. The initial research dataset is MVTec AD, starting with the `bottle` category.
+VisionGuard AI combines classical digital image processing with a frozen-feature anomaly detector. The primary benchmark is the **screw** category of MVTec AD: a compact, fully framed object with varying in-frame rotations. Training uses only normal examples; inference returns an anomaly score, heatmap, and candidate regions for human review.
 
-## Current status
+This is an academic prototype. It does not identify defect types, produce calibrated defect probabilities, or certify products for manufacturing.
 
-The foundation includes validated experiment settings, CPU/CUDA device selection, logging, dataset discovery, and a seeded normal-only calibration split. The Image Processing Lab exposes color-space conversion, log/gamma/contrast transforms, histograms, equalization and CLAHE, spatial and frequency filtering, noise and denoising, template matching, Sobel/Laplacian/LoG/Canny edges, morphology including top-hat, thresholding, contours, Harris/HOG/ORB features, Hough lines/circles, and watershed segmentation. Both classical baselines are implemented. A frozen pretrained ResNet18 extractor produces layer2/layer3 patch embeddings, and a normal-only memory-bank builder supports random and greedy coreset sampling. Patch scoring, anomaly-map construction, image/pixel threshold calibration, artifact save/load, test-split evaluation for the patch detector and classical baselines, and a local Streamlit Lab/inspection/results interface are implemented. No benchmark results are available until the evaluators are run on the local dataset.
+## What it includes
 
-## Planned approach
+- A Streamlit app with an **Image Processing Lab**, **Inspect**, and **Results** tabs.
+- Image operations for color spaces, intensity transforms, histograms, smoothing and sharpening, noise, frequency filtering, template matching, edges, morphology, thresholding, contours, watershed, and Harris/HOG/Hough/ORB features.
+- Three inspection methods: a ResNet18 patch-memory detector, a rule-based local-contrast baseline, and a per-pixel normal-reference baseline.
+- Dataset validation, reproducible detector building, test-split evaluation, memory-bank sweeps, plots, and ranked error examples.
 
-The initial AI baseline will use pretrained ResNet18 intermediate feature maps, patch embeddings, and nearest-neighbor distances to a sampled memory bank built only from normal training images. It is an educational PatchCore-inspired approach, not a claim to implement the official PatchCore algorithm. A classical image-processing baseline will provide a transparent comparison.
+The app operates on uploaded images locally. A model artifact is category-specific; the default configuration uses screw.
 
-Evaluation will use the official test split. Test images and their masks will not be used to build the normal reference bank. Results will be reported only after real experiments. Image processing is intended to run locally; inspection outputs are experimental and require human review.
+## Measured result snapshot
 
-## Environment
+The full screw test split contains 160 images (41 normal, 119 anomalous) and has complete anomaly-mask coverage. On this split the patch detector reached image AUROC **0.7510** and pixel AUROC **0.9825**. At its calibrated image threshold it detected 19 of 119 anomalous images, so its image-level recall was **0.1597**. The thresholded pixel map had precision **0.1057** and recall **0.6797**. AUROC measures ranking; it does not mean a single threshold is effective.
 
-Use Python 3.11 on Windows. Create the virtual environment from PowerShell:
+See [the results report](docs/results.md) for all three methods, the secondary bottle experiment, and plots. These values are copied from local evaluator outputs; they are not official MVTec benchmark scores.
 
-```powershell
+## Setup
+
+Use Python 3.11 on Windows. From PowerShell in the repository root:
+
+~~~powershell
 py -3.11 -m venv .venv
-```
-
-If the Python launcher cannot find Python 3.11, use the installed interpreter path:
-
-```powershell
-& "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe" -m venv .venv
-```
-
-The checked-in environment uses CPU-only PyTorch, which satisfies the required CPU path. This machine also has an NVIDIA RTX 2050 with 4 GB VRAM, but the current Torch build cannot use it. Choose and install a matching CUDA-enabled Torch/TorchVision build before model experiments if you want GPU acceleration. Install PyTorch and TorchVision first:
-
-```powershell
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install torch==2.12.1 torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cpu
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python.exe -m pip install -e .
-```
+~~~
 
-To use the NVIDIA GPU instead, replace `cpu` with `cu132` in the PyTorch command. The CUDA wheel is substantially larger. Keep the matched Torch/TorchVision versions together. Official choices are listed at [PyTorch Get Started](https://pytorch.org/get-started/locally/) and [previous versions](https://pytorch.org/get-started/previous-versions/).
+The first detector build may download the pinned pretrained ResNet18 weights into Torch's local cache. A CPU-only PyTorch build is sufficient.
 
-You can use the environment without activating it by running commands through `.venv\Scripts\python.exe`.
+## Dataset
 
-## Dataset setup
+Dataset images are not included in Git. The local experiment used the foersben/mvtec-ad Hugging Face mirror; it is not MVTec's official download host. MVTec AD is licensed CC BY-NC-SA 4.0. Keep the attribution and license notice, do not use it commercially, and check the terms before redistributing images or derived examples.
 
-Obtain MVTec AD from the [official dataset page](https://www.mvtec.com/research-teaching/datasets/mvtec-ad), review its access and usage conditions, and extract it so the selected category resembles:
+Install the optional Hub client and download the screw category:
 
-```text
-data/
-└── mvtec_ad/
-    └── bottle/
-        ├── train/good/
-        ├── test/good/
-        ├── test/<defect_type>/
-        └── ground_truth/<defect_type>/
-```
+~~~powershell
+.\.venv\Scripts\python.exe -m pip install huggingface_hub
+.\.venv\Scripts\python.exe -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='foersben/mvtec-ad', repo_type='dataset', allow_patterns=['screw/**'], local_dir='data/mvtec_ad')"
+~~~
 
-The dataset is not included in this repository. Do not commit dataset images or generated model weights.
+Validate the local files:
 
-MVTec AD is released under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License (CC BY-NC-SA 4.0). This project uses the dataset for non-commercial academic work; see the [official MVTec AD page](https://www.mvtec.com/research-teaching/datasets/mvtec-ad) for the current license terms. Dataset credit: MVTec Software GmbH.
+~~~powershell
+.\.venv\Scripts\python.exe scripts\check_dataset.py --root data\mvtec_ad --category screw
+~~~
 
-After installing the package, validate the local category:
+The local screw category has 320 normal training images and 160 test images. Its camera is fixed; the screw's pose varies within the image. A bottle category is also present for a secondary comparison. See [dataset notes](data/README.md).
 
-```powershell
-.\.venv\Scripts\python.exe scripts\check_dataset.py --root data\mvtec_ad --category bottle
-```
+## Build, evaluate, and run
 
-## Build a patch detector artifact
-
-Build a detector from the configured category's normal training images:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\build_memory_bank.py
-```
-
-The command makes a seeded, disjoint split of `train/good`, builds the sampled patch memory bank from the training portion, and calibrates image and pixel thresholds on the normal holdout. It uses the configured ResNet input size, sampling strategy, seed, and image/pixel percentiles. The resulting `.npz` artifact is saved under `models/`; it contains the memory bank and detector metadata, but not the pretrained ResNet weights. The first run may need to retrieve the pinned TorchVision weights. Use `--dataset-root`, `--category`, or `--output` to override the configured paths.
-
-## Evaluate the saved patch detector
-
-Evaluate the artifact on that category's official `test` split:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\evaluate_detector.py
-```
-
-By default, the command reads the dataset root and category from `configs/default.yaml`, loads `models/<category>_patch_detector.npz`, and writes `outputs/<category>/metrics.json` and `outputs/<category>/per_image.csv`. Pass `--artifact`, `--dataset-root`, or `--output-dir` to override those paths. The artifact determines which category is evaluated. The first run may need to load the pinned pretrained ResNet18 weights.
-
-Image metrics include every test image. Pixel metrics use normal test images as all-normal masks and anomalous images only when their ground-truth masks exist; missing masks are counted and excluded from pixel metrics. AUROC is calculated from continuous scores. Precision, recall, F1, and confusion counts use the calibrated thresholds stored in the artifact. AUC is reported as unavailable when the evaluated labels contain only one class. Test data is used only for final evaluation, never for memory-bank construction or calibration. Reports are generated only by running the command; no example benchmark scores are checked in.
-
-## Evaluate the classical baselines
-
-Run both classical methods on the official test split:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\evaluate_classical.py
-```
-
-The evaluator fits the per-pixel reference model on the seeded normal training subset, calibrates both image thresholds and the reference pixel threshold on the disjoint normal holdout, then evaluates the test images and masks. It uses the configured threshold rules (`percentile` or `mean_plus_3std`); the rule-based method keeps its per-image Otsu pixel mask. Pixel precision/recall/F1 use each method's final mask, while pixel AUROC uses its continuous score map. Reports are written to `outputs/classical/<category>/metrics.json` and `per_image.csv`. Use `--dataset-root`, `--category`, or `--output-dir` to override the configured paths.
-
-## Compare all three methods
-
-After building the patch detector artifact, run the unified evaluation command:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\evaluate.py
-```
-
-It evaluates the patch detector and both classical baselines on the same official test images and writes aligned metrics and per-image results to `outputs/metrics/<category>/`. The comparison checks that image and mask coverage agrees and requires an artifact built from the current normal split sizes; rebuild it with `scripts/build_memory_bank.py` when the split settings change. Test labels and masks are used only for final evaluation.
-
-Pixel metrics use a common 256 by 256 grid. Score maps use bilinear resizing; ground-truth and predicted masks use nearest-neighbor resizing. Reports include image and pixel AUROC, precision, recall, F1, and IoU, including per-defect metrics. Three warm-up images are excluded from latency summaries. Each method reports preprocessing, inference, and total time with its device and input size. For the learned detector, inference covers feature extraction and nearest-neighbor scoring; for the classical methods, it covers the full baseline pipeline.
-
-Image AUROC is the headline ranking metric. Accuracy is omitted because class imbalance can make it misleading.
-
-The command also runs the random and greedy memory-bank sweep at 1%, 5%, 10%, 25%, and 100%. To keep greedy coreset selection tractable, it creates a seeded candidate pool of up to 2,048 patches from the full normal-only patch pool. The 100% point is the full candidate pool used for this experiment. Metadata records both pool and source candidate counts; sweep test AUROC does not change the configured detector default. Sweep metrics are saved as `memory_bank_sweep.json` and `.csv` under `outputs/metrics/<category>/`.
-
-The evaluator saves ROC, confusion-matrix, score-distribution, and memory-bank-sweep plots under `outputs/plots/<category>/research/`. Ranked false-positive and false-negative figures go under `outputs/examples/<category>/research/`. `failure_analysis.md` lists the cases for human inspection; add plausible visual causes after reviewing the genuine figures. `experiment_metadata.json` records the config, category, split counts, seeds, device, warm-up settings, and library versions.
-
-Run a five-image wiring check with:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\evaluate.py --smoke
-```
-
-Smoke outputs are separated under `smoke_test` folders and labeled as non-research results. Adjust the run with `--warmup-images`, `--pixel-metric-size`, `--sweep-ratios`, `--sweep-pool-size`, or `--failure-examples` as needed.
-
-## Run the local dashboard
-
-Launch the Streamlit interface from the project root:
-
-```powershell
+~~~powershell
+.\.venv\Scripts\python.exe scripts\build_memory_bank.py --category screw
+.\.venv\Scripts\python.exe scripts\evaluate.py --category screw
 .\.venv\Scripts\python.exe -m streamlit run app.py
-```
+~~~
 
-Upload one image above the tabs. **Image Processing Lab** lets you choose an operation, adjust its controls, and compare the processed output beside the input. **Inspect** offers the patch detector, rule-based baseline, and calibrated per-pixel reference baseline. The reference baseline fits pixel statistics on the seeded normal training split and calibrates its pixel threshold on the disjoint held-out normal split; it does not use test images or masks and requires the uploaded image to match the training-image dimensions. **Results** displays the combined report from `outputs/metrics/<category>` by default; enter another report directory to view detector-only or classical-only reports. Use a saved `.npz` detector artifact in the sidebar for AI inspection; the first inspection may load the pinned pretrained ResNet18 weights. Uploaded images are separate from test-split evaluation and do not change its metrics.
+Open the local URL printed by Streamlit. The app defaults to the screw detector artifact and screw report directory. Upload a product image, select **Inspect** for anomaly detection, **Image Processing Lab** for transformations, or **Results** for the saved evaluation report.
 
-## Development checks
+The evaluator writes metrics and per-image rows under outputs/metrics/screw/, plots under outputs/plots/screw/research/, and ranked examples under outputs/examples/screw/research/. These generated files, the dataset, and detector artifacts are ignored by Git. The compact report and selected plots under docs/ are versioned for review.
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest
-```
+For a short wiring check, run scripts/evaluate.py --category screw --smoke; smoke metrics are explicitly labeled and are not research results.
 
-## Repository layout
+## Project map
 
-- `configs/`: shared project settings.
-- `data/`: local dataset instructions and ignored dataset files.
-- `models/`: instructions for local model artifacts.
-- `scripts/`: reproducible command-line workflows.
-- `src/visionguard/`: configuration, data, processing, model, evaluation, visualization, and UI modules.
-- `tests/`: fast tests using small temporary fixtures.
-- `docs/`: methodology and experiment documentation as implementation proceeds.
-- `outputs/`: generated local artifacts, ignored by Git apart from this README.
+- app.py: Streamlit interface and report display.
+- src/visionguard/lab_ui.py: Image Processing Lab controls and rendering.
+- src/visionguard/processing/: color, filtering, transforms, segmentation, features, baselines, and related operations.
+- src/visionguard/model/: ResNet features, memory bank, threshold calibration, inference, and safe artifact loading.
+- src/visionguard/data/: MVTec discovery, splitting, and validation.
+- src/visionguard/evaluation.py, classical_evaluation.py, comparison.py: scoring and method comparison.
+- scripts/: dataset checking, model building, and evaluation entry points.
+- docs/: methodology, source walkthrough, results, and limitations.
 
-## Limitations
+## Reproducibility and license
 
-The image and pixel cutoffs are calibrated on held-out normal training images and may not generalize to new production conditions. Test masks are reserved for final evaluation. This is an academic demonstration, not a certified industrial inspection system. An anomaly score is not automatically a calibrated defect probability. A qualified human inspector must verify suspected defects before manufacturing decisions.
+The configuration, split seed, model settings, and dataset provenance are described in [the methodology](docs/methodology.md). Important constraints are listed in [limitations](docs/limitations.md). This project is for academic demonstration; anomaly flags need human review. The MVTec-derived data remains subject to its own license.

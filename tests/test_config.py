@@ -8,7 +8,7 @@ from visionguard.config import ConfigError, DEFAULT_CONFIG_PATH, load_config
 
 def test_default_configuration_loads() -> None:
     config = load_config()
-    assert config["dataset"]["category"] == "bottle"
+    assert config["dataset"]["category"] == "screw"
     assert config["model"]["architecture"] == "resnet18"
     assert config["dataset"]["calibration_fraction"] == 0.15
     assert config["thresholds"]["image_rule"] == "mean_plus_3std"

@@ -248,7 +248,7 @@ def build_experiment_metadata(
             "test_labels_used_for_selection": False,
             "default_changed_by_sweep": False,
         },
-        "config": config,
+        "config": {**config, "dataset": {**config.get("dataset", {}), "category": report.category}},
         "library_versions": versions,
     }
 
